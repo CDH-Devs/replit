@@ -1,98 +1,186 @@
 /**
  * Fetches Facebook video information using Cloudflare-compatible methods
- * This is a replacement for fb-downloader-scrapper that works in Workers environment
+ * Multiple fallback APIs for reliability
  */
+
 export async function getFbVideoInfo(videoUrl) {
-  try {
-    console.log(`Fetching video info for: ${videoUrl}`);
-    
-    // Use a third-party API that's compatible with Cloudflare Workers
-    // Option 1: Use FBDownloader API
-    const apiUrl = `https://www.fbdownloader.com/api/video?url=${encodeURIComponent(videoUrl)}`;
-    
-    const response = await fetch(apiUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    if (data.success && data.video) {
-      return {
-        url: videoUrl,
-        sd: data.video.sd || data.video.url,
-        hd: data.video.hd || data.video.url,
-        title: data.video.title || 'Facebook Video',
-        thumbnail: data.video.thumbnail || ''
-      };
-    }
-    
-    // Fallback: Try alternative API
-    return await getFbVideoInfoFallback(videoUrl);
-    
-  } catch (error) {
-    console.error('Primary API error:', error.message);
-    
-    // Try fallback method
+  console.log(`Fetching video info for: ${videoUrl}`);
+  
+  const apis = [
+    { name: 'FDown', handler: tryFDownAPI },
+    { name: 'GetFVid', handler: tryGetFVidAPI },
+    { name: 'SaveFrom', handler: trySaveFromAPI },
+    { name: 'Direct', handler: tryDirectMethod }
+  ];
+  
+  for (const api of apis) {
     try {
-      return await getFbVideoInfoFallback(videoUrl);
-    } catch (fallbackError) {
-      console.error('Fallback API error:', fallbackError.message);
-      return { error: 'Unable to fetch video. Please check the URL and try again.' };
+      console.log(`Trying ${api.name} API...`);
+      const result = await api.handler(videoUrl);
+      if (result && (result.hd || result.sd)) {
+        console.log(`Success with ${api.name} API`);
+        return result;
+      }
+    } catch (error) {
+      console.error(`${api.name} API failed:`, error.message);
     }
   }
+  
+  return { 
+    error: 'Unable to fetch video. The video might be private, deleted, or temporarily unavailable.' 
+  };
 }
 
 /**
- * Fallback method using alternative API
+ * Method 1: FDown.net API (most reliable)
  */
-async function getFbVideoInfoFallback(videoUrl) {
-  try {
-    // Use SnapSave API as fallback
-    const apiUrl = `https://snapsave.app/api/ajaxSearch`;
-    
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      body: `q=${encodeURIComponent(videoUrl)}&vt=facebook`
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Fallback API failed: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    if (data.status === 'ok' && data.data) {
-      // Parse HTML response to extract video URLs
-      const htmlContent = data.data;
-      
-      // Extract HD and SD links from the HTML
-      const hdMatch = htmlContent.match(/href="([^"]+)"[^>]*>\s*Download\s+HD/i);
-      const sdMatch = htmlContent.match(/href="([^"]+)"[^>]*>\s*Download\s+SD/i);
-      
-      if (hdMatch || sdMatch) {
-        return {
-          url: videoUrl,
-          sd: sdMatch ? sdMatch[1] : hdMatch ? hdMatch[1] : null,
-          hd: hdMatch ? hdMatch[1] : null,
-          title: 'Facebook Video',
-          thumbnail: ''
-        };
-      }
-    }
-    
-    throw new Error('No video links found in response');
-    
-  } catch (error) {
-    throw new Error(`Fallback method failed: ${error.message}`);
+async function tryFDownAPI(videoUrl) {
+  const apiUrl = 'https://www.fdown.net/download.php';
+  
+  const formData = new URLSearchParams();
+  formData.append('URLz', videoUrl);
+  
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+    },
+    body: formData.toString()
+  });
+  
+  if (!response.ok) {
+    throw new Error(`FDown API failed: ${response.status}`);
   }
+  
+  const html = await response.text();
+  
+  // Extract video URLs from HTML response
+  const hdMatch = html.match(/href="(https:\/\/[^"]+)"[^>]*>\s*Download\s+High\s+Quality/i);
+  const sdMatch = html.match(/href="(https:\/\/[^"]+)"[^>]*>\s*Download\s+(?:Normal|Standard|Low)\s+Quality/i);
+  
+  if (hdMatch || sdMatch) {
+    return {
+      url: videoUrl,
+      hd: hdMatch ? hdMatch[1] : null,
+      sd: sdMatch ? sdMatch[1] : (hdMatch ? hdMatch[1] : null),
+      title: 'Facebook Video',
+      thumbnail: ''
+    };
+  }
+  
+  throw new Error('No video URLs found in response');
+}
+
+/**
+ * Method 2: GetFVid API
+ */
+async function tryGetFVidAPI(videoUrl) {
+  const apiUrl = 'https://getfvid.com/downloader';
+  
+  const formData = new URLSearchParams();
+  formData.append('url', videoUrl);
+  
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    },
+    body: formData.toString()
+  });
+  
+  if (!response.ok) {
+    throw new Error(`GetFVid API failed: ${response.status}`);
+  }
+  
+  const html = await response.text();
+  
+  // Extract video URLs - GetFVid returns direct download links
+  const hdMatch = html.match(/href="(https:\/\/[^"]+)"[^>]*>\s*Download\s+in\s+(?:HD|High)/i);
+  const sdMatch = html.match(/href="(https:\/\/[^"]+)"[^>]*>\s*Download\s+in\s+(?:SD|Normal)/i);
+  
+  if (hdMatch || sdMatch) {
+    return {
+      url: videoUrl,
+      hd: hdMatch ? hdMatch[1] : null,
+      sd: sdMatch ? sdMatch[1] : (hdMatch ? hdMatch[1] : null),
+      title: 'Facebook Video',
+      thumbnail: ''
+    };
+  }
+  
+  throw new Error('No video URLs found');
+}
+
+/**
+ * Method 3: SaveFrom.net API
+ */
+async function trySaveFromAPI(videoUrl) {
+  const apiUrl = `https://www.savefrom.net/download?url=${encodeURIComponent(videoUrl)}`;
+  
+  const response = await fetch(apiUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    }
+  });
+  
+  if (!response.ok) {
+    throw new Error(`SaveFrom API failed: ${response.status}`);
+  }
+  
+  const html = await response.text();
+  
+  // Extract download links
+  const linkMatch = html.match(/href="(https?:\/\/[^"]+\.mp4[^"]*)"/i);
+  
+  if (linkMatch) {
+    return {
+      url: videoUrl,
+      hd: linkMatch[1],
+      sd: linkMatch[1],
+      title: 'Facebook Video',
+      thumbnail: ''
+    };
+  }
+  
+  throw new Error('No video URLs found');
+}
+
+/**
+ * Method 4: Direct extraction (last resort)
+ */
+async function tryDirectMethod(videoUrl) {
+  // Try to fetch the Facebook page directly
+  const response = await fetch(videoUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    }
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Direct fetch failed: ${response.status}`);
+  }
+  
+  const html = await response.text();
+  
+  // Look for video URLs in page source (Facebook embeds them)
+  const hdMatch = html.match(/"playable_url_quality_hd":"(https?:[^"]+)"/);
+  const sdMatch = html.match(/"playable_url":"(https?:[^"]+)"/);
+  
+  if (hdMatch || sdMatch) {
+    const decodeUrl = (url) => url.replace(/\\u0025/g, '%').replace(/\\\//g, '/');
+    
+    return {
+      url: videoUrl,
+      hd: hdMatch ? decodeUrl(hdMatch[1]) : null,
+      sd: sdMatch ? decodeUrl(sdMatch[1]) : (hdMatch ? decodeUrl(hdMatch[1]) : null),
+      title: 'Facebook Video',
+      thumbnail: ''
+    };
+  }
+  
+  throw new Error('No video URLs found in page source');
 }
