@@ -1,6 +1,8 @@
 import { getFbVideoInfo } from '../services/facebook.js';
 
-export function registerHandlers(bot) {
+export function registerHandlers(bot, env) {
+  // Store env in bot for access in handlers
+  bot.env = env;
   // Start command
   bot.command('start', async (ctx) => {
     await ctx.reply(
@@ -39,7 +41,7 @@ export function registerHandlers(bot) {
     await ctx.reply("⏳ වීඩියෝ සබැඳිය විශ්ලේෂණය කරමින්... කරුණාකර මොහොතක් රැඳී සිටින්න.");
     
     try {
-      const result = await getFbVideoInfo(fbUrl);
+      const result = await getFbVideoInfo(fbUrl, bot.env);
       
       if (result.error) {
         await ctx.reply(
