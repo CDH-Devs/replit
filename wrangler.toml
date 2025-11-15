@@ -2,9 +2,6 @@ name = "fdown-telegram-bot"
 main = "index.mjs" 
 compatibility_date = "2025-11-01" 
 
-# ⚠️ Service Worker එකක් ලෙස නොසලකා ES Module එකක් ලෙස සැලකීමට
-type = "module" 
-
 compatibility_flags = [
     "nodejs_compat" 
 ]
