@@ -1,11 +1,8 @@
-import { Telegraf } = require('telegraf'); // Cloudflare Workers වලදී import/require මිශ්‍රණයකට ඉඩ දිය හැක.
-// නමුත් සම්පූර්ණයෙන්ම ES Module වලට මාරු වෙමු.
-
 import { Telegraf } from 'telegraf';
 import axios from 'axios';
-import * as cheerio from 'cheerio'; // cheerio සඳහා මේ ආකාරයට import කිරීම අවශ්‍ය විය හැකියි.
+import * as cheerio from 'cheerio'; 
 
-// ⚠️ ආරක්ෂක අවදානම: ඔබේ Bot Token එක මෙතනටම ඇතුළත් කර ඇත.
+// ⚠️ ඔබේ Bot Token එක මෙතනටම ඇතුළත් කරන්න.
 const BOT_TOKEN = '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
 
 if (BOT_TOKEN === 'ඔබේ_BotFather_Token_එක_මෙතනට_දාන්න' || !BOT_TOKEN) {
@@ -25,7 +22,6 @@ async function getDownloadLink(url) {
             }
         });
         
-        // Cheerio load කිරීම
         const $ = cheerio.load(response.data);
 
         // Web Scraping Logic: 'Download HD' button එක සොයා ගැනීම.
@@ -129,10 +125,6 @@ export default {
         }
     }
 
-    return new Response('Fdown Telegram Bot Worker is running.', { status: 200 });
-  },
-};
-    // GET request එකක් පැමිණියහොත් සරල පිළිතුරක් දෙන්න
     return new Response('Fdown Telegram Bot Worker is running.', { status: 200 });
   },
 };
