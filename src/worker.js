@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { getFbVideoInfo } from './src/services/facebook.js';
+import { getFbVideoInfo } from './src/worker/facebook.js';
 import fs from 'fs';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
