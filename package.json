@@ -12,7 +12,6 @@
   "dependencies": {
     "dotenv": "^16.6.1",
     "grammy": "^1.38.3"
-    // playwright ඉවත් කර ඇත
   },
   "devDependencies": {
     "wrangler": "^3.114.15"
