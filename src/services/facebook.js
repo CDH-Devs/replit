@@ -1,136 +1,219 @@
-export async function getFbVideoInfo(videoUrl, env) {
-  console.log(`Fetching video info for: ${videoUrl}`);
-  
-  try {
-    const formData = new URLSearchParams();
-    formData.append('URLz', videoUrl);
+import { chromium } from 'playwright';
+
+let browser = null;
+let browserContext = null;
+
+async function initBrowser() {
+  if (!browser) {
+    console.log('🌐 Launching browser...');
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--window-size=1920x1080'
+      ]
+    });
     
-    const response = await fetch('https://fdown.net/download.php', {
+    browserContext = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      viewport: { width: 1920, height: 1080 },
+      locale: 'en-US',
+      timezoneId: 'America/New_York'
+    });
+    
+    console.log('✅ Browser launched successfully');
+  }
+  return browserContext;
+}
+
+async function closeBrowser() {
+  if (browser) {
+    await browser.close();
+    browser = null;
+    browserContext = null;
+    console.log('🔒 Browser closed');
+  }
+}
+
+async function extractVideoWithPlaywright(videoUrl) {
+  let page = null;
+  try {
+    const context = await initBrowser();
+    page = await context.newPage();
+    
+    console.log('📱 Navigating to Facebook video...');
+    
+    const videoUrls = [];
+    
+    page.on('response', async (response) => {
+      const url = response.url();
+      if (url.includes('.mp4') || url.includes('video')) {
+        const contentType = response.headers()['content-type'];
+        if (contentType && contentType.includes('video')) {
+          console.log('🎥 Found video URL:', url.substring(0, 100) + '...');
+          videoUrls.push(url);
+        }
+      }
+    });
+    
+    await page.goto(videoUrl, { 
+      waitUntil: 'networkidle',
+      timeout: 30000 
+    });
+    
+    await page.waitForTimeout(3000);
+    
+    const videoElements = await page.$$('video');
+    for (const video of videoElements) {
+      const src = await video.getAttribute('src');
+      if (src && src.includes('http')) {
+        videoUrls.push(src);
+      }
+    }
+    
+    if (videoUrls.length > 0) {
+      const uniqueUrls = [...new Set(videoUrls)];
+      const hdUrl = uniqueUrls.find(url => url.includes('hd') || url.includes('720') || url.includes('1080'));
+      const sdUrl = uniqueUrls.find(url => !url.includes('hd') && (url.includes('sd') || url.includes('480')));
+      
+      return {
+        url: hdUrl || sdUrl || uniqueUrls[0],
+        hd: hdUrl || uniqueUrls[0],
+        sd: sdUrl || uniqueUrls[0],
+        title: 'Facebook Video',
+        service: 'Playwright'
+      };
+    }
+    
+    throw new Error('No video URLs captured');
+  } catch (error) {
+    console.error('Playwright extraction failed:', error.message);
+    throw error;
+  } finally {
+    if (page) {
+      await page.close();
+    }
+  }
+}
+
+async function tryGetFVid(videoUrl) {
+  try {
+    const response = await fetch('https://www.getfvid.com/downloader', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://fdown.net/',
-        'Origin': 'https://fdown.net',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Referer': 'https://www.getfvid.com/'
       },
-      body: formData.toString()
+      body: `url=${encodeURIComponent(videoUrl)}`
     });
     
     if (!response.ok) {
-      console.error('FDown Error:', response.status);
-      
-      if (response.status === 403) {
-        return {
-          error: 'Access denied by download service. The service may be blocking automated requests. Please try again later or use a different video URL.'
-        };
-      }
-      
-      if (response.status === 429) {
-        return {
-          error: 'Service is temporarily rate-limited. Please wait a moment and try again.'
-        };
-      }
-      
-      if (response.status === 503 || response.status === 502) {
-        return {
-          error: 'Download service is temporarily unavailable. Please try again in a few minutes.'
-        };
-      }
-      
-      return {
-        error: `Unable to fetch video (Error ${response.status}). Please check the URL and try again.`
-      };
+      throw new Error(`GetFVid returned status ${response.status}`);
     }
     
     const html = await response.text();
     
-    const alertMatch = html.match(/<div[^>]*class="[^"]*alert\s+alert-(?:danger|warning)[^"]*"[^>]*>(.*?)<\/div>/is);
-    if (alertMatch) {
-      const errorText = alertMatch[1].replace(/<[^>]*>/g, '').trim();
-      console.error('FDown returned alert:', errorText);
-      return {
-        error: errorText || 'Could not process the video. Please check if the video is public and try again.'
-      };
-    }
+    const hdMatch = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*Download\s+in\s+(?:HD|High)/i);
+    const sdMatch = html.match(/<a[^>]+href="([^"]+)"[^>]*>\s*Download\s+in\s+(?:SD|Normal)/i);
     
-    const hdMatch = html.match(/href="([^"]+)"[^>]*>\s*Download\s+(?:HD\s+)?[Vv]ideo(?:\s+in\s+HD\s+[Qq]uality)?/i) || 
-                    html.match(/href="([^"]+)"[^>]*>\s*Download\s+[Hh]igh\s+[Qq]uality/i) ||
-                    html.match(/href="([^"]+)"[^>]*class="[^"]*hd[^"]*"/i);
-    
-    const sdMatch = html.match(/href="([^"]+)"[^>]*>\s*Download\s+(?:SD\s+)?[Vv]ideo(?:\s+in\s+(?:SD|[Nn]ormal)\s+[Qq]uality)?/i) || 
-                    html.match(/href="([^"]+)"[^>]*>\s*Download\s+[Nn]ormal\s+[Qq]uality/i) ||
-                    html.match(/href="([^"]+)"[^>]*class="[^"]*sd[^"]*"/i);
-    
-    const titleMatch = html.match(/<h3[^>]*>(.*?)<\/h3>/i) || 
-                       html.match(/<title>([^<]*?)\s*-\s*FDOWN<\/title>/i);
-    
-    const hdUrl = hdMatch ? hdMatch[1].trim() : null;
-    const sdUrl = sdMatch ? sdMatch[1].trim() : null;
-    const title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : 'Facebook Video';
+    const hdUrl = hdMatch ? hdMatch[1] : null;
+    const sdUrl = sdMatch ? sdMatch[1] : null;
     
     if (!hdUrl && !sdUrl) {
-      console.error('No download links found in response');
-      console.log('HTML preview:', html.substring(0, 500));
-      return {
-        error: 'Could not extract video download links. The video might be private, deleted, or the service is temporarily unavailable. Please try again later.'
-      };
+      const anyDownload = html.match(/href="(https?:\/\/[^"]+\.mp4[^"]*)"/i);
+      if (anyDownload) {
+        return {
+          url: anyDownload[1],
+          hd: anyDownload[1],
+          sd: anyDownload[1],
+          title: 'Facebook Video',
+          service: 'GetFVid'
+        };
+      }
+      throw new Error('No download links found');
     }
     
     return {
       url: hdUrl || sdUrl,
       hd: hdUrl,
       sd: sdUrl,
-      title: title,
+      title: 'Facebook Video',
+      service: 'GetFVid'
+    };
+  } catch (error) {
+    console.error('GetFVid failed:', error.message);
+    throw error;
+  }
+}
+
+export async function getFbVideoInfo(videoUrl, env) {
+  console.log(`Fetching video info for: ${videoUrl}`);
+  
+  const quickServices = [
+    { name: 'GetFVid', func: tryGetFVid }
+  ];
+  
+  for (const service of quickServices) {
+    try {
+      console.log(`Trying ${service.name}...`);
+      const result = await service.func(videoUrl);
+      console.log(`✅ Success with ${service.name}`);
+      return {
+        url: result.url,
+        hd: result.hd,
+        sd: result.sd,
+        title: result.title,
+        thumbnail: '',
+        duration: 0,
+        author: ''
+      };
+    } catch (error) {
+      console.log(`❌ ${service.name} failed: ${error.message}`);
+      continue;
+    }
+  }
+  
+  console.log('⚙️ Quick services failed, using browser automation...');
+  
+  try {
+    const result = await extractVideoWithPlaywright(videoUrl);
+    console.log('✅ Success with browser automation');
+    return {
+      url: result.url,
+      hd: result.hd,
+      sd: result.sd,
+      title: result.title,
       thumbnail: '',
       duration: 0,
       author: ''
     };
   } catch (error) {
-    console.error('Facebook video fetch error:', error.message);
-    
-    if (error.message.includes('429') || error.message.includes('Too Many Requests')) {
-      return {
-        error: 'Service is temporarily rate-limited. Please wait a moment and try again.'
-      };
-    }
-    
-    if (error.message.includes('503') || error.message.includes('502')) {
-      return {
-        error: 'Download service is temporarily unavailable. Please try again in a few minutes.'
-      };
-    }
-    
-    return {
-      error: `Failed to fetch video: ${error.message}. Please try again later.`
-    };
+    console.log(`❌ Browser automation failed: ${error.message}`);
   }
+  
+  console.log('\n⚠️ All methods failed. Providing helpful message to user.');
+  
+  return {
+    error: '❌ වීඩියෝව බාගත කිරීමට නොහැකි විය. / Unable to download video.\n\n' +
+           '💡 කරුණාකර පරීක්ෂා කරන්න / Please check:\n' +
+           '• වීඩියෝව ප්‍රසිද්ධ (public) දැයි / Video is public\n' +
+           '• වීඩියෝව තවමත් ලබා ගත හැකි දැයි / Video is still available\n' +
+           '• URL එක නිවැරදි දැයි / URL is correct\n\n' +
+           '🔄 සේවාවන් තාවකාලිකව අක්‍රීය විය හැක. කරුණාකර පසුව නැවත උත්සාහ කරන්න.\n' +
+           'Services may be temporarily down. Please try again later.'
+  };
 }
 
-function extractVideoId(url) {
-  const patterns = [
-    /facebook\.com\/.*\/videos\/(\d+)/,
-    /facebook\.com\/watch\/?\?v=(\d+)/,
-    /fb\.watch\/([a-zA-Z0-9_-]+)/,
-    /facebook\.com\/.*\/posts\/(\d+)/,
-    /facebook\.com\/reel\/(\d+)/
-  ];
-  
-  for (const pattern of patterns) {
-    const match = url.match(pattern);
-    if (match) {
-      return match[1];
-    }
-  }
-  
-  return url.split('/').pop().split('?')[0];
-}
+process.on('SIGINT', async () => {
+  await closeBrowser();
+});
+
+process.on('SIGTERM', async () => {
+  await closeBrowser();
+});
