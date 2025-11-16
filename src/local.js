@@ -2,8 +2,14 @@ import { Bot } from 'grammy';
 import { registerHandlers } from './handlers/telegram.js';
 import 'dotenv/config';
 
-// Read environment variables from .dev.vars (manually loaded)
-const BOT_TOKEN = process.env.BOT_TOKEN || '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8';
+// Read environment variables
+const BOT_TOKEN = process.env.BOT_TOKEN;
+
+if (!BOT_TOKEN) {
+  console.error('❌ Error: BOT_TOKEN environment variable is required!');
+  console.error('💡 Please set your BOT_TOKEN in Replit Secrets.');
+  process.exit(1);
+}
 
 const env = {
   BOT_TOKEN
