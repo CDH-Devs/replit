@@ -7,7 +7,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 
 if (!BOT_TOKEN) {
   console.error('❌ Error: BOT_TOKEN environment variable is required!');
-  console.error('💡 Please set your BOT_TOKEN in Replit Secrets.');
+  console.error('💡 Please set your BOT_TOKEN in Replit Secrets or .env file.');
   process.exit(1);
 }
 
