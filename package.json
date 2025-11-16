@@ -9,10 +9,9 @@
     "dev": "node server.js"
   },
   "dependencies": {
-    "express": "^5.1.0",
+    "dotenv": "^16.4.5",
     "grammy": "^1.38.3",
-    "node-telegram-bot-api": "^0.66.0",
-    "youtube-dl-exec": "^3.0.26"
+    "playwright": "^1.56.1"
   },
   "devDependencies": {
     "wrangler": "^3.78.0"
