@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 command = "bun run build"
 watch_dir = "src"
 
+timeout = 30
+
 [observability]
 enabled = true
-
-timeout = 30
