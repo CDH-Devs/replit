@@ -7,10 +7,5 @@ compatibility_flags = ["nodejs_compat"]
 command = "bun run build"
 watch_dir = "src"
 
-{
-  "observability": {
-    "logs": {
-      "enabled": true,
-    }
-  }
-}
+[observability]
+enabled = true
