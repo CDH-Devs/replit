@@ -1,7 +1,7 @@
 /**
  * src/index.js
  * Cloudflare Worker Telegram Bot Code (Facebook Video Downloader via fdown.net scraping)
- * * විශේෂාංග: HD/Normal Download, URL Cleanup, Thumbnail/Title Scraping, Blob Stream Upload.
+ * ** විශේෂාංග: Improved Scraping for Title/Stats (V2), HD/Normal Download, Blob Stream Upload.
  */
 
 export default {
@@ -28,7 +28,6 @@ export default {
                     return new Response('OK', { status: 200 });
                 }
 
-                // Link වලංගුතාවය පරීක්ෂා කිරීම
                 const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
                 
                 if (isLink) {
@@ -54,44 +53,65 @@ export default {
                         });
 
                         const resultHtml = await fdownResponse.text();
-
-                        // ** 2. Thumbnail, Title සහ Stats Scrap කිරීම **
+                        
+                        // ** 2. Thumbnail, Title සහ Stats Scrap කිරීම (Improved RegEx V2) **
                         let videoUrl = null;
                         let thumbnailLink = null;
                         let videoTitle = "මාතෘකාවක් නොමැත";
                         let videoStats = "";
 
-                        // Thumbnail Link සොයා ගැනීම
-                        const thumbnailRegex = /<img[^>]+src=["']?([^"'\s]+)["']?[^>]*class=["']?fb_img["']?[^>]*>/i;
+                        // Thumbnail Link සොයා ගැනීම (පෙර එකම)
+                        const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
                         let thumbnailMatch = resultHtml.match(thumbnailRegex);
                         if (thumbnailMatch && thumbnailMatch[1]) {
                             thumbnailLink = thumbnailMatch[1];
                             console.log(`[SCRAP] Thumbnail found: ${thumbnailLink}`);
                         }
 
-                        // Video Title සොයා ගැනීම
-                        const titleRegex = /<h4[^>]*>([\s\S]*?)<\/h4>/i;
-                        let titleMatch = resultHtml.match(titleRegex);
-                        if (titleMatch && titleMatch[1]) {
-                            videoTitle = titleMatch[1].trim().replace(/\n/g, ' '); // Line breaks ඉවත් කිරීම
+                        // ** IMPROVED TITLE SCRAPING V2 **
+                        // Title එක සොයා ගැනීම (h4 හෝ ඒ අවට ඇති පෙළ ඉලක්ක කර ගනිමු)
+                        const titleRegexV2 = /<h4[^>]*>([\s\S]*?)<\/h4>/i;
+                        let titleMatchV2 = resultHtml.match(titleRegexV2);
+                        
+                        if (titleMatchV2 && titleMatchV2[1]) {
+                            let scrapedTitle = titleMatchV2[1].trim();
+                            // HTML tags සහ නව රේඛා ඉවත් කර පිරිසිදු කිරීම
+                            scrapedTitle = scrapedTitle.replace(/<[^>]*>/g, '').trim(); 
+                            if (scrapedTitle !== "Video Title" && scrapedTitle.length > 0) {
+                                videoTitle = scrapedTitle;
+                            }
                         }
+                        
+                        // Fallback: Description/Duration බ්ලොක් එකට ඉහළින් ඇති h3 හෝ p බ්ලොක් එකක මාතෘකාව තිබිය හැක.
+                        if (videoTitle === "මාතෘකාවක් නොමැත") {
+                            const fallbackTitleRegex = /<p><strong>(.*?)<\/strong><\/p>/i;
+                            let fallbackTitleMatch = resultHtml.match(fallbackTitleRegex);
+                            if (fallbackTitleMatch && fallbackTitleMatch[1]) {
+                                videoTitle = fallbackTitleMatch[1].trim();
+                            }
+                        }
+                        
 
-                        // Video Description/Duration සොයා ගැනීම
-                        const descriptionRegex = /<p[^>]*>Description: ([\s\S]*?)<\/p>/i;
-                        let descriptionMatch = resultHtml.match(descriptionRegex);
-                        if (descriptionMatch && descriptionMatch[1] && descriptionMatch[1].trim() !== "No video description...") {
-                            videoStats = `විස්තරය: ${descriptionMatch[1].trim()}`;
+                        // ** IMPROVED STATS SCRAPING V2 (Duration/Description) **
+                        // Duration සොයා ගැනීම (වඩා විශ්වාසදායකයි)
+                        const durationRegexV2 = /Duration:\s*(\d+)\s*seconds/i;
+                        let durationMatchV2 = resultHtml.match(durationRegexV2);
+                        
+                        if (durationMatchV2 && durationMatchV2[1]) {
+                            videoStats = `දිග: ${durationMatchV2[1].trim()} තත්පර`;
                         } else {
-                            const durationRegex = /Duration: (\d+) seconds/i;
-                            let durationMatch = resultHtml.match(durationRegex);
-                            if (durationMatch && durationMatch[1]) {
-                                videoStats = `දිග: ${durationMatch[1].trim()} තත්පර`;
+                            // Description සොයා ගැනීම
+                            const descriptionRegexV2 = /Description:\s*([\s\S]+?)(?=<br>|<\/p>)/i;
+                            let descriptionMatchV2 = resultHtml.match(descriptionRegexV2);
+                            if (descriptionMatchV2 && descriptionMatchV2[1] && descriptionMatchV2[1].trim() !== "No video description...") {
+                                videoStats = `විස්තරය: ${descriptionMatchV2[1].trim()}`;
                             } else {
                                 videoStats = `විස්තර/දිග තොරතුරු නොමැත.`;
                             }
                         }
 
-                        // 3. HD සහ Normal Video Links Scrap කිරීම
+
+                        // 3. HD සහ Normal Video Links Scrap කිරීම (පෙර එකම)
                         const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in HD Quality.*<\/a>/i;
                         let match = resultHtml.match(hdLinkRegex);
 
@@ -167,7 +187,7 @@ export default {
                 body: JSON.stringify({
                     chat_id: chatId,
                     text: text,
-                    parse_mode: 'Markdown', // Markdown Format එක භාවිතා කරයි
+                    parse_mode: 'Markdown', 
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
                 }),
             });
