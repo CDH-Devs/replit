@@ -1,7 +1,7 @@
 /**
  * src/index.js
  * Cloudflare Worker Telegram Bot Code (Facebook Video Downloader via fdown.net scraping)
- * ** විශේෂාංග: Improved Scraping for Title/Stats (V2), HD/Normal Download, Blob Stream Upload.
+ * ** විශේෂාංග: Improved Scraping for Title/Stats (V3), HD/Normal Download, Blob Stream Upload, Caption Length Limit Fix.
  */
 
 export default {
@@ -54,13 +54,13 @@ export default {
 
                         const resultHtml = await fdownResponse.text();
                         
-                        // ** 2. Thumbnail, Title සහ Stats Scrap කිරීම (Improved RegEx V2) **
+                        // ** 2. Thumbnail, Title සහ Stats Scrap කිරීම (Improved RegEx V3) **
                         let videoUrl = null;
                         let thumbnailLink = null;
                         let videoTitle = "මාතෘකාවක් නොමැත";
                         let videoStats = "";
 
-                        // Thumbnail Link සොයා ගැනීම (පෙර එකම)
+                        // Thumbnail Link සොයා ගැනීම
                         const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
                         let thumbnailMatch = resultHtml.match(thumbnailRegex);
                         if (thumbnailMatch && thumbnailMatch[1]) {
@@ -68,50 +68,51 @@ export default {
                             console.log(`[SCRAP] Thumbnail found: ${thumbnailLink}`);
                         }
 
-                        // ** IMPROVED TITLE SCRAPING V2 **
-                        // Title එක සොයා ගැනීම (h4 හෝ ඒ අවට ඇති පෙළ ඉලක්ක කර ගනිමු)
-                        const titleRegexV2 = /<h4[^>]*>([\s\S]*?)<\/h4>/i;
-                        let titleMatchV2 = resultHtml.match(titleRegexV2);
+                        // ** IMPROVED TITLE SCRAPING V3 **
+                        // Title එක සොයා ගැනීම: card-body > h4 ව්‍යුහය ඉලක්ක කර ගනිමු.
+                        const titleRegexV3 = /<h4[^>]*>([\s\S]*?)<\/h4>/i;
+                        let titleMatchV3 = resultHtml.match(titleRegexV3);
                         
-                        if (titleMatchV2 && titleMatchV2[1]) {
-                            let scrapedTitle = titleMatchV2[1].trim();
-                            // HTML tags සහ නව රේඛා ඉවත් කර පිරිසිදු කිරීම
+                        if (titleMatchV3 && titleMatchV3[1]) {
+                            let scrapedTitle = titleMatchV3[1].trim();
+                            // HTML tags සහ අනවශ්‍ය spaces ඉවත් කර පිරිසිදු කිරීම
                             scrapedTitle = scrapedTitle.replace(/<[^>]*>/g, '').trim(); 
-                            if (scrapedTitle !== "Video Title" && scrapedTitle.length > 0) {
+                            scrapedTitle = scrapedTitle.replace(/\s\s+/g, ' '); 
+                            
+                            // "Video Title" වැනි Generic text තිබේ නම් එය මග හරින්න
+                            if (scrapedTitle.length > 0 && scrapedTitle.toLowerCase() !== "video title") {
                                 videoTitle = scrapedTitle;
                             }
                         }
-                        
-                        // Fallback: Description/Duration බ්ලොක් එකට ඉහළින් ඇති h3 හෝ p බ්ලොක් එකක මාතෘකාව තිබිය හැක.
-                        if (videoTitle === "මාතෘකාවක් නොමැත") {
-                            const fallbackTitleRegex = /<p><strong>(.*?)<\/strong><\/p>/i;
-                            let fallbackTitleMatch = resultHtml.match(fallbackTitleRegex);
-                            if (fallbackTitleMatch && fallbackTitleMatch[1]) {
-                                videoTitle = fallbackTitleMatch[1].trim();
-                            }
-                        }
-                        
 
-                        // ** IMPROVED STATS SCRAPING V2 (Duration/Description) **
-                        // Duration සොයා ගැනීම (වඩා විශ්වාසදායකයි)
-                        const durationRegexV2 = /Duration:\s*(\d+)\s*seconds/i;
-                        let durationMatchV2 = resultHtml.match(durationRegexV2);
+                        // ** IMPROVED STATS SCRAPING V3 (Duration/Description) **
                         
-                        if (durationMatchV2 && durationMatchV2[1]) {
-                            videoStats = `දිග: ${durationMatchV2[1].trim()} තත්පර`;
+                        // 1. Duration සොයා ගැනීම
+                        const durationRegexV3 = /Duration:\s*(\d+)\s*seconds/i;
+                        let durationMatchV3 = resultHtml.match(durationRegexV3);
+
+                        if (durationMatchV3 && durationMatchV3[1]) {
+                            videoStats = `දිග: ${durationMatchV3[1].trim()} තත්පර`;
                         } else {
-                            // Description සොයා ගැනීම
-                            const descriptionRegexV2 = /Description:\s*([\s\S]+?)(?=<br>|<\/p>)/i;
-                            let descriptionMatchV2 = resultHtml.match(descriptionRegexV2);
-                            if (descriptionMatchV2 && descriptionMatchV2[1] && descriptionMatchV2[1].trim() !== "No video description...") {
-                                videoStats = `විස්තරය: ${descriptionMatchV2[1].trim()}`;
-                            } else {
-                                videoStats = `විස්තර/දිග තොරතුරු නොමැත.`;
+                            // 2. Description සොයා ගැනීම
+                            const descriptionRegexV3 = /Description:\s*([\s\S]+?)(?=<br>|<\/p>)/i;
+                            let descriptionMatchV3 = resultHtml.match(descriptionRegexV3);
+                            
+                            if (descriptionMatchV3 && descriptionMatchV3[1]) {
+                                let scrapedDesc = descriptionMatchV3[1].trim();
+                                // "No video description..." තිබේ නම් එය මග හරින්න
+                                if (scrapedDesc.toLowerCase() !== "no video description...") {
+                                     videoStats = `විස්තරය: ${scrapedDesc}`;
+                                }
                             }
                         }
 
+                        if (videoStats === "") {
+                            videoStats = `විස්තර/දිග තොරතුරු නොමැත.`;
+                        }
 
-                        // 3. HD සහ Normal Video Links Scrap කිරීම (පෙර එකම)
+
+                        // 3. HD සහ Normal Video Links Scrap කිරීම
                         const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in HD Quality.*<\/a>/i;
                         let match = resultHtml.match(hdLinkRegex);
 
@@ -145,14 +146,21 @@ export default {
                             const quality = hdLinkRegex.test(resultHtml) ? "HD" : "Normal";
                             console.log(`[SUCCESS] Video Link found (${quality}): ${cleanedUrl}`);
                             
-                            // ** 4. නව Caption එක සකස් කිරීම **
-                            const finalCaption = `**${videoTitle}**\n\nQuality: ${quality}\n${videoStats}\n\n[🔗 Original Link](${text})`;
+                            // ** 4. නව Caption එක සකස් කිරීම සහ Length Limit Fix **
+                            let finalCaption = `**${videoTitle}**\n\nQuality: ${quality}\n${videoStats}\n\n[🔗 Original Link](${text})`;
+                            
+                            // Caption Length Limit එක පරීක්ෂා කිරීම (1024 characters)
+                            if (finalCaption.length > 1024) {
+                                // Caption එක කපා දැමීම
+                                finalCaption = finalCaption.substring(0, 1000) + '... (Caption Truncated)';
+                            }
+
                             
                             // ** 5. sendVideo Function එකට Thumbnail Link එක සමඟ යැවීම **
                             await this.sendVideo(telegramApi, chatId, cleanedUrl, finalCaption, messageId, thumbnailLink);
                             
                         } else {
-                            console.error(`[SCRAPING FAILED] No HD/Normal link found for ${text}.`);
+                            console.error(`[SCRAPING FAILED] No HD/Normal link found for ${text}. HTML response start: ${resultHtml.substring(0, 50)}...`);
                             await this.sendMessage(telegramApi, chatId, '⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය. වීඩියෝව Private (පුද්ගලික) විය හැක.', messageId);
                         }
                         
