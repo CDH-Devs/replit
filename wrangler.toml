@@ -8,7 +8,7 @@ command = "bun run build"
 watch_dir = "src"
 
 [[kv_namespaces]]
-binding = "POST_STATUS_KV"
+binding = "VIDEO_LINKS"
 id = "5646baa1536f4080980cd5c5ce3eb169"
 
 [observability]
