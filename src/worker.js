@@ -1,6 +1,7 @@
 /**
  * src/index.js
- * Final Fix V11.1: Audio Only Inline Button via Callback Query + Direct URL sendAudio.
+ * Final Fix V12: Fixed BUTTON_DATA_INVALID using KV Storage for Callback Data.
+ * Requires: A KV Namespace bound as env.VIDEO_LINKS
  */
 
 // ** 1. MarkdownV2 හි සියලුම විශේෂ අක්ෂර Escape කිරීමේ Helper Function **
@@ -15,10 +16,8 @@ function sanitizeText(text) {
     let cleaned = text.replace(/<[^>]*>/g, '').trim();
     cleaned = cleaned.replace(/\s\s+/g, ' ');
     cleaned = cleaned.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-    // MarkdownV2 escape is NOT applied here, as this is used for non-Markdown fields (like title/performer)
     return cleaned;
 }
-
 
 export default {
     async fetch(request, env, ctx) {
@@ -32,7 +31,7 @@ export default {
         try {
             const update = await request.json();
             const message = update.message;
-            const callbackQuery = update.callback_query; // 🎵 Callback Query එක හසුරුවයි
+            const callbackQuery = update.callback_query;
 
             // -------------------------------------------------------------
             // 🚀 1. CALLBACK QUERY HANDLING (Inline Button Clicks)
@@ -45,15 +44,23 @@ export default {
 
                 const parts = data.split('|');
 
-                // 'audio|VIDEO_URL|TITLE' Format එක හඳුනාගැනීම
-                if (parts.length >= 3 && parts[0] === 'audio') {
-                    const videoUrlForAudio = parts[1]; // මෙය MP4 Link එකයි
+                // 'audio_ID|RANDOM_ID|TITLE' Format එක හඳුනාගැනීම
+                if (parts.length >= 3 && parts[0] === 'audio_ID') {
+                    const randomId = parts[1]; // KV Key එක
                     const videoTitle = parts[2];
 
-                    await this.answerCallbackQuery(telegramApi, callbackQueryId, '⏳ Audio එක සකසමින්...');
-                    
-                    // Video Link එකම Audio Link එක ලෙස යවයි. (Telegram එය MP4 ලෙස හඳුනාගත යුතුය)
-                    await this.sendAudio(telegramApi, chatId, videoUrlForAudio, messageId, videoTitle);
+                    await this.answerCallbackQuery(telegramApi, callbackQueryId, '⏳ Audio Link එක ලබා ගනිමින්...');
+
+                    // ** KV Store එකෙන් Original Link එක ලබා ගැනීම **
+                    const videoUrlForAudio = await env.VIDEO_LINKS.get(randomId);
+
+                    if (videoUrlForAudio) {
+                        // Audio යැවීම (Video Link එකම Audio ලෙස යවයි)
+                        await this.sendAudio(telegramApi, chatId, videoUrlForAudio, messageId, videoTitle);
+                    } else {
+                        // Link එක කල් ඉකුත් වී හෝ සොයා ගැනීමට නොහැකි නම්
+                        await this.sendMessage(telegramApi, chatId, escapeMarkdownV2(`⚠️ සමාවෙන්න, එම Audio Link එක කල් ඉකුත් වී ඇත\\. කරුණාකර නැවත වීඩියෝ Link එක එවන්න\\.`));
+                    }
 
                     return new Response('OK', { status: 200 });
                 }
@@ -128,15 +135,18 @@ export default {
 
                         if (videoUrl) {
                             let cleanedUrl = videoUrl.replace(/&amp;/g, '&');
-                            const videoTitle = 'Facebook Video'; // වීඩියෝ මාතෘකාව ලෙස තබමු
+                            const videoTitle = 'Facebook Video'; 
                             
                             // -------------------------------------------------------------
-                            // ** V11.1 FIX: Audio Button එක එකතු කිරීම **
+                            // ** V12 FIX: KV Storage භාවිතයෙන් කෙටි ID එකක් නිර්මාණය කිරීම **
                             // -------------------------------------------------------------
+                            const randomId = Math.random().toString(36).substring(2, 12); // අක්ෂර 10ක ID එකක්
+                            await env.VIDEO_LINKS.put(randomId, cleanedUrl, { expirationTtl: 3600 }); // පැයක් සඳහා ගබඩා කරයි
+
                             const replyMarkup = {
                                 inline_keyboard: [
-                                    // Callback Data Format: audio|VIDEO_URL|TITLE
-                                    [{ text: '🎧 Audio පමණක් ගන්න', callback_data: `audio|${cleanedUrl}|${videoTitle}` }]
+                                    // Callback Data Format: audio_ID|RANDOM_ID|TITLE
+                                    [{ text: '🎧 Audio පමණක් ගන්න', callback_data: `audio_ID|${randomId}|${videoTitle}` }]
                                 ]
                             };
 
@@ -159,7 +169,7 @@ export default {
             return new Response('OK', { status: 200 });
 
         } catch (e) {
-             // console.error(e.stack); // දෝෂ වාර්තා කිරීමට
+            // console.error(e.stack);
             return new Response('OK', { status: 200 });
         }
     },
@@ -185,7 +195,7 @@ export default {
         }
     },
 
-    // ** V11.1 FIX: replyMarkup parameter එක එකතු කරයි **
+    // ** V12: replyMarkup parameter එක එකතු කරයි **
     async sendVideo(api, chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, replyMarkup = null) {
         
         const videoResponse = await fetch(videoUrl);
@@ -209,7 +219,7 @@ export default {
             formData.append('reply_to_message_id', replyToMessageId);
         }
         
-        // ** V11.1 FIX: Inline Keyboard එකතු කිරීම **
+        // ** V12: Inline Keyboard එකතු කිරීම **
         if (replyMarkup) {
             formData.append('reply_markup', JSON.stringify(replyMarkup));
         }
@@ -244,20 +254,19 @@ export default {
         }
     },
 
-    // ** V11.1 FIX: Audio URL එක සෘජුවම යැවීම සඳහා නව sendAudio function එක **
+    // ** V12: Audio URL එක සෘජුවම යැවීම **
     async sendAudio(api, chatId, audioUrl, replyToMessageId, title) {
-        // Direct URL එකක් භාවිතයෙන් Audio යවයි
         try {
             await fetch(`${api}/sendAudio`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     chat_id: chatId,
-                    audio: audioUrl, // Direct Video URL එක
+                    audio: audioUrl,
                     caption: escapeMarkdownV2(`🎶 **Audio Downloaded**\n\nමෙම ගොනුව ඔබට Audio ලෙස Save කරගත හැක\\.`),
                     parse_mode: 'MarkdownV2',
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
-                    title: sanitizeText(title), // File name ලෙස යැවීම
+                    title: sanitizeText(title),
                     performer: 'Facebook'
                 }),
             });
@@ -266,7 +275,7 @@ export default {
         }
     },
 
-    // ** V11.1 FIX: Callback Answer යැවීම **
+    // ** V12: Callback Answer යැවීම **
     async answerCallbackQuery(api, callbackQueryId, text) {
         try {
             await fetch(`${api}/answerCallbackQuery`, {
@@ -275,7 +284,7 @@ export default {
                 body: JSON.stringify({
                     callback_query_id: callbackQueryId,
                     text: text,
-                    show_alert: false // කුඩා Notification එකක් ලෙස පෙන්වයි
+                    show_alert: false 
                 }),
             });
         } catch (e) {
