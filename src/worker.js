@@ -1,28 +1,31 @@
 /**
  * src/index.js
- * V11: Snapsave.app Integration, Video Info Scraping (Title, Views, Likes, Duration), Sinhala Friendly Telegram Bot Responses.
+ * Final Fix V10: No Caption Mode (Video Only) + Cleaned Error Messages.
  */
 
-// Helper to escape Telegram MarkdownV2
+// ** 1. MarkdownV2 හි සියලුම විශේෂ අක්ෂර Escape කිරීමේ Helper Function **
+// මෙය සියලුම Static Messages සඳහා භාවිතා වේ.
 function escapeMarkdownV2(text) {
     if (!text) return "";
     return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1');
 }
 
-// Helper to clean scraped text
+// ** 2. Scraped Title/Stats සඳහා Cleaner Function **
+// Title/Stats scraping සඳහා තවදුරටත් අවශ්‍ය නැත, නමුත් scrape වූ text error messages සඳහා sanitize කිරීමට තබා ගනිමු.
 function sanitizeText(text) {
     if (!text) return "";
-    let cleaned = text.replace(/<[^>]*>/g, '').trim();
-    cleaned = cleaned.replace(/\s\s+/g, ' ');
-    cleaned = cleaned.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-    cleaned = cleaned.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1');
+    let cleaned = text.replace(/<[^>]*>/g, '').trim(); 
+    cleaned = cleaned.replace(/\s\s+/g, ' '); 
+    cleaned = cleaned.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); 
+    cleaned = cleaned.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1'); 
     return cleaned;
 }
+
 
 export default {
     async fetch(request, env, ctx) {
         if (request.method !== 'POST') {
-            return new Response('Hello, I am your Facebook Video Telegram Bot [Snapsave.app powered].', { status: 200 });
+            return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
         }
 
         const BOT_TOKEN = env.BOT_TOKEN;
@@ -36,125 +39,93 @@ export default {
                 const chatId = message.chat.id;
                 const text = message.text.trim();
                 const messageId = message.message_id;
-
-                // Handle "/start"
+                
                 if (text === '/start') {
-                    await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('👋 සුභ දවසක්! මට Facebook වීඩියෝ Link එකක් එවන්න. Snapsave.app හරහා download කර දෙන්නම්.'), messageId);
+                    await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('👋 සුභ දවසක්! මට Facebook වීඩියෝ Link එකක් එවන්න. එවිට මම එය download කර දෙන්නම්.'), messageId);
                     return new Response('OK', { status: 200 });
                 }
 
-                // Validate Facebook link (supports fb.watch/fb.me)
                 const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
-
+                
                 if (isLink) {
-                    await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('⌛️ වීඩියෝව හඳුනාගෙන download link සෙවීම සිදුවෙයි... කරුණාකර රැදී සිටින්න.'), messageId);
-
+                    await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('⌛️ වීඩියෝව හඳුනා ගැනේ... කරුණාකර මොහොතක් රැඳී සිටින්න.'), messageId);
+                    
                     try {
-                        // Snapsave.app get video info
-                        const snapsaveUrl = "https://snapsave.app/action.php";
+                        const fdownUrl = "https://fdown.net/download.php";
+                        
                         const formData = new URLSearchParams();
-                        formData.append('url', text);
+                        formData.append('URLz', text); 
 
-                        const snapsaveResponse = await fetch(snapsaveUrl, {
+                        const fdownResponse = await fetch(fdownUrl, {
                             method: 'POST',
                             headers: {
-                                'User-Agent': 'Mozilla/5.0',
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                                 'Content-Type': 'application/x-www-form-urlencoded',
-                                'Referer': 'https://snapsave.app/',
+                                'Referer': 'https://fdown.net/', 
                             },
                             body: formData.toString(),
+                            redirect: 'follow' 
                         });
 
-                        const resultHtml = await snapsaveResponse.text();
-
-                        // Scrape Video Info
-                        // Title, Thumbnail, Video Links, Duration etc
-                        let title = 'නොදන්නා';
-                        let views = 'නොදන්නා';
-                        let likes = 'නොදන්නා';
-                        let duration = 'නොදන්නා';
+                        const resultHtml = await fdownResponse.text();
+                        
                         let videoUrl = null;
                         let thumbnailLink = null;
-
-                        // Title
-                        const titleRegex = /<div class="caption">(.*?)<\/div>/i;
-                        const titleMatch = resultHtml.match(titleRegex);
-                        if (titleMatch && titleMatch[1]) title = sanitizeText(titleMatch[1]);
-                        // Thumbnail
-                        const thumbRegex = /<img[^>]+class="thumb"[^>]*src="([^"]+)"/i;
-                        const thumbMatch = resultHtml.match(thumbRegex);
-                        if (thumbMatch && thumbMatch[1]) thumbnailLink = thumbMatch[1];
-                        // Duration
-                        const durationRegex = /<b>Duration:<\/b>\s*([^<]+)/i;
-                        const durationMatch = resultHtml.match(durationRegex);
-                        if (durationMatch && durationMatch[1]) duration = sanitizeText(durationMatch[1]);
-                        // Views
-                        const viewsRegex = /<b>Views:<\/b>\s*([^<]+)/i;
-                        const viewsMatch = resultHtml.match(viewsRegex);
-                        if (viewsMatch && viewsMatch[1]) views = sanitizeText(viewsMatch[1]);
-                        // Likes
-                        const likesRegex = /<b>Likes:<\/b>\s*([^<]+)/i;
-                        const likesMatch = resultHtml.match(likesRegex);
-                        if (likesMatch && likesMatch[1]) likes = sanitizeText(likesMatch[1]);
-                        // Video Link - HD first, normal fallback
-                        const hdLinkRegex = /<a[^>]+href="([^"]+)"[^>]*>\s*Download\s*HD\s*<\/a>/i;
-                        let match = resultHtml.match(hdLinkRegex);
-                        if (match && match[1]) {
-                            videoUrl = match[1];
-                        } else {
-                            const normalLinkRegex = /<a[^>]+href="([^"]+)"[^>]*>\s*Download\s*<\/a>/i;
-                            match = resultHtml.match(normalLinkRegex);
-                            if (match && match[1]) videoUrl = match[1];
+                        
+                        // Thumbnail Link සොයා ගැනීම
+                        const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
+                        let thumbnailMatch = resultHtml.match(thumbnailRegex);
+                        if (thumbnailMatch && thumbnailMatch[1]) {
+                            thumbnailLink = thumbnailMatch[1];
                         }
 
-                        // Info message
-                        const infoMsg =
-                          `🎬 *Title*: ${title}\n👁️ *Views*: ${views}\n👍 *Likes*: ${likes}\n⏱️ *Duration*: ${duration}`;
-                        await this.sendMessage(
-                            telegramApi,
-                            chatId,
-                            escapeMarkdownV2(infoMsg),
-                            messageId
-                        );
+                        // Link Scraping
+                        const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in HD Quality.*<\/a>/i;
+                        let match = resultHtml.match(hdLinkRegex);
+
+                        if (match && match[1]) {
+                            videoUrl = match[1]; 
+                        } else {
+                            const normalLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in Normal Quality.*<\/a>/i;
+                            match = resultHtml.match(normalLinkRegex);
+
+                            if (match && match[1]) {
+                                videoUrl = match[1]; 
+                            }
+                        }
 
                         if (videoUrl) {
-                            // Fix entities
                             let cleanedUrl = videoUrl.replace(/&amp;/g, '&');
-                            // Check size limit (optional: HEAD request, if CORS allows)
-                            // Otherwise, send as video if reasonably sized (<50mb), else send direct link.
-                            await this.sendVideo(telegramApi, chatId, cleanedUrl, null, messageId, thumbnailLink);
+                            
+                            // ** V10 FIX: Caption එකක් අවශ්‍ය නැත. **
+                            // finalCaption variable එකක් මෙහිදී නිර්මාණය නොකෙරේ.
+
+                            await this.sendVideo(telegramApi, chatId, cleanedUrl, null, messageId, thumbnailLink); // Caption එක null ලෙස යවයි
+                            
                         } else {
-                            await this.sendMessage(
-                                telegramApi,
-                                chatId,
-                                escapeMarkdownV2('⚠️ Download Link එක සොයා ගැනීමට නොහැකි වුණා. වීඩියෝව private/region-lock වෙන්න පුළුවන්!'),
-                                messageId
-                            );
+                            await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය. වීඩියෝව Private (පුද්ගලික) විය හැක.'), messageId);
                         }
-                    } catch (snapsaveError) {
-                        await this.sendMessage(
-                            telegramApi,
-                            chatId,
-                            escapeMarkdownV2('❌ වීඩියෝ තොරතුරු ලබා ගැනීමේදී දෝෂයක් ඇති වුණා.'),
-                            messageId
-                        );
+                        
+                    } catch (fdownError) {
+                        await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('❌ වීඩියෝ තොරතුරු ලබා ගැනීමේදී දෝෂයක් ඇති විය.'), messageId);
                     }
+                    
                 } else {
-                    await this.sendMessage(
-                        telegramApi,
-                        chatId,
-                        escapeMarkdownV2('❌ කරුණාකර වලංගු Facebook වීඩියෝ Link එකක් එවන්න.'),
-                        messageId
-                    );
+                    await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('❌ කරුණාකර වලංගු Facebook වීඩියෝ Link එකක් එවන්න.'), messageId);
                 }
             }
+
             return new Response('OK', { status: 200 });
+
         } catch (e) {
-            return new Response('OK', { status: 200 });
+            return new Response('OK', { status: 200 }); 
         }
     },
 
-    // Telegram message sender
+    // ------------------------------------
+    // සහායක Functions
+    // ------------------------------------
+
     async sendMessage(api, chatId, text, replyToMessageId) {
         try {
             await fetch(`${api}/sendMessage`, {
@@ -162,64 +133,71 @@ export default {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     chat_id: chatId,
-                    text: text,
-                    parse_mode: 'MarkdownV2',
+                    text: text, 
+                    parse_mode: 'MarkdownV2', 
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
                 }),
             });
         } catch (e) {
-            // Optionally log/send admin error
+            // Error handling
         }
     },
 
-    // Video uploader to Telegram
+    // ** V10 FIX: Caption එකක් නොමැතිව sendVideo **
     async sendVideo(api, chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null) {
-        // Try direct upload
+        
+        const videoResponse = await fetch(videoUrl);
+        
+        if (videoResponse.status !== 200) {
+            await this.sendMessage(api, chatId, escapeMarkdownV2(`⚠️ වීඩියෝව කෙලින්ම Upload කිරීමට අසාර්ථකයි. CDN වෙත පිවිසීමට නොහැක.`), replyToMessageId);
+            return;
+        }
+        
+        const videoBlob = await videoResponse.blob();
+        
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+        
+        // ** V10 FIX: caption එක null නොවේ නම් පමණක් එකතු කරයි **
+        if (caption) {
+            formData.append('caption', caption);
+            formData.append('parse_mode', 'MarkdownV2'); 
+        }
+        
+        if (replyToMessageId) {
+            formData.append('reply_to_message_id', replyToMessageId);
+        }
+        
+        formData.append('video', videoBlob, 'video.mp4'); 
+
+        if (thumbnailLink) {
+            try {
+                const thumbResponse = await fetch(thumbnailLink);
+                if (thumbResponse.ok) {
+                    const thumbBlob = await thumbResponse.blob();
+                    formData.append('thumb', thumbBlob, 'thumbnail.jpg');
+                } 
+            } catch (e) {
+                // Error handling
+            }
+        }
+
         try {
-            const videoResponse = await fetch(videoUrl);
-            if (videoResponse.status !== 200) {
-                await this.sendMessage(api, chatId, escapeMarkdownV2(`⚠️ Video upload අසාර්ථකයි. CDN වැරදි.`), replyToMessageId);
-                return;
-            }
-            const videoBlob = await videoResponse.blob();
-            const formData = new FormData();
-            formData.append('chat_id', chatId);
-            if (caption) {
-                formData.append('caption', caption);
-                formData.append('parse_mode', 'MarkdownV2');
-            }
-            if (replyToMessageId) {
-                formData.append('reply_to_message_id', replyToMessageId);
-            }
-            formData.append('video', videoBlob, 'video.mp4');
-            if (thumbnailLink) {
-                try {
-                    const thumbResponse = await fetch(thumbnailLink);
-                    if (thumbResponse.ok) {
-                        const thumbBlob = await thumbResponse.blob();
-                        formData.append('thumb', thumbBlob, 'thumbnail.jpg');
-                    }
-                } catch (e) {
-                    // Thumb fetch fail
-                }
-            }
-            // Send to Telegram
             const telegramResponse = await fetch(`${api}/sendVideo`, {
                 method: 'POST',
-                body: formData,
+                body: formData, 
             });
+            
             const telegramResult = await telegramResponse.json();
+            
             if (!telegramResponse.ok) {
-                await this.sendMessage(api, chatId,
-                    escapeMarkdownV2(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Error: ${telegramResult.description || 'නොදන්නා දෝෂයක්.'})`),
-                    replyToMessageId
-                );
+                // error message එක පිරිසිදු කර ඇත
+                await this.sendMessage(api, chatId, escapeMarkdownV2(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Error: ${telegramResult.description || 'නොදන්නා දෝෂයක්.'})`), replyToMessageId);
             }
+            
         } catch (e) {
-            await this.sendMessage(api, chatId,
-                escapeMarkdownV2(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Network හෝ Timeout දෝෂයක්).`),
-                replyToMessageId
-            );
+            // error message එක පිරිසිදු කර ඇත
+            await this.sendMessage(api, chatId, escapeMarkdownV2(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Network හෝ Timeout දෝෂයක්).`), replyToMessageId);
         }
     }
 };
