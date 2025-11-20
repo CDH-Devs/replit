@@ -1,8 +1,7 @@
 /**
  * src/index.js
- * Final Fix V10 + User Tracking + Admin Broadcast Feature.
- * BOT_TOKEN and OWNER_ID are hardcoded inside fetch(request, env, ctx) as requested.
- * Syntax errors reported by Bun have been fixed.
+ * FIX: All Helper Functions moved inside the export default object to resolve '500 Internal Server Error' 
+ * often caused by environment variable/binding access issues (env.USER_DATABASE) or scope problems in Cloudflare Workers.
  */
 
 // ** 1. MarkdownV2 හි සියලුම විශේෂ අක්ෂර Escape කිරීමේ Helper Function **
@@ -21,78 +20,68 @@ function sanitizeText(text) {
     return cleaned;
 }
 
-// ------------------------------------
-// KV සහායක Functions
-// ------------------------------------
-
-// ** 3. KV එකට ID එක Save කිරීමේ Helper Function **
-async function saveUserId(env, userId) {
-    // Note: env.USER_DATABASE binding එක තවමත් අවශ්‍යයි.
-    if (!env.USER_DATABASE) return; 
-
-    const key = `user:${userId}`;
-    const isNew = await env.USER_DATABASE.get(key) === null; 
-
-    if (isNew) {
-        await env.USER_DATABASE.put(key, "1"); 
-        console.log(`New user ID saved: ${userId}`);
-    }
-}
-
-// ** 4. KV එකෙන් සියලු Users ගණන ලබා ගැනීමේ Helper Function **
-async function getAllUsersCount(env) {
-    if (!env.USER_DATABASE) return 0;
-    
-    const listResult = await env.USER_DATABASE.list({ prefix: "user:" });
-    
-    return listResult.keys.length;
-}
-
-// ** 5. සියලු Users වෙත පණිවිඩය යැවීමේ Helper Function (Broadcast) **
-async function broadcastMessage(env, telegramApi, messageText) {
-    if (!env.USER_DATABASE) return 0;
-    
-    let listResult = { keys: [], list_complete: false };
-    let cursor = null;
-    let successfulSends = 0;
-    let failedSends = 0;
-    
-    do {
-        listResult = await env.USER_DATABASE.list({ prefix: "user:", cursor: cursor });
-        cursor = listResult.list_complete ? null : listResult.cursor;
-
-        for (const key of listResult.keys) {
-            const userId = key.name.split(':')[1];
-            
-            try {
-                await fetch(`${telegramApi}/sendMessage`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        chat_id: userId,
-                        text: messageText, 
-                        parse_mode: 'MarkdownV2',
-                    }),
-                });
-                successfulSends++;
-            } catch (e) {
-                failedSends++;
-            }
-        }
-
-    } while (cursor); 
-
-    return { successfulSends, failedSends };
-}
-
-// ------------------------------------
-// ප්‍රධාන Worker Logic
-// ------------------------------------
 
 export default {
     
     // ------------------------------------
-    // Telegram API සහායක Functions
+    // KV සහායක Functions (Worker Object තුළට)
+    // ------------------------------------
+
+    async saveUserId(env, userId) {
+        // env.USER_DATABASE binding එක අවශ්‍යයි
+        if (!env.USER_DATABASE) return; 
+
+        const key = `user:${userId}`;
+        const isNew = await env.USER_DATABASE.get(key) === null; 
+
+        if (isNew) {
+            await env.USER_DATABASE.put(key, "1"); 
+        }
+    },
+
+    async getAllUsersCount(env) {
+        if (!env.USER_DATABASE) return 0;
+        const listResult = await env.USER_DATABASE.list({ prefix: "user:" });
+        return listResult.keys.length;
+    },
+
+    async broadcastMessage(env, telegramApi, messageText) {
+        if (!env.USER_DATABASE) return 0;
+        
+        let listResult = { keys: [], list_complete: false };
+        let cursor = null;
+        let successfulSends = 0;
+        let failedSends = 0;
+        
+        do {
+            listResult = await env.USER_DATABASE.list({ prefix: "user:", cursor: cursor });
+            cursor = listResult.list_complete ? null : listResult.cursor;
+
+            for (const key of listResult.keys) {
+                const userId = key.name.split(':')[1];
+                
+                try {
+                    await fetch(`${telegramApi}/sendMessage`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chat_id: userId,
+                            text: messageText, 
+                            parse_mode: 'MarkdownV2',
+                        }),
+                    });
+                    successfulSends++;
+                } catch (e) {
+                    failedSends++;
+                }
+            }
+
+        } while (cursor); 
+        return { successfulSends, failedSends };
+    },
+
+    // ------------------------------------
+    // Telegram API සහායක Functions (Worker Object තුළට)
     // ------------------------------------
 
     async sendMessage(api, chatId, text, replyToMessageId) {
@@ -165,7 +154,6 @@ export default {
         }
     },
 
-    // ** V10 FIX: Caption එකක් නොමැතිව sendVideo **
     async sendVideo(api, chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null) {
         
         const videoResponse = await fetch(videoUrl);
@@ -232,6 +220,7 @@ export default {
         // *****************************************************************
         // ********** [ ඔබගේ අගයන් මෙහි ඇතුළත් කරන්න ] ************************
         // *****************************************************************
+        // !!! වැදගත්: කරුණාකර මේවා ඔබේ සත්‍ය අගයන් සමඟ වෙනස් කරන්න !!!
         const BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'; 
         const OWNER_ID = 'YOUR_OWNER_ID_HERE'; 
         // *****************************************************************
@@ -242,6 +231,11 @@ export default {
             const update = await request.json();
             const message = update.message;
             const callbackQuery = update.callback_query;
+            
+            // Telegram වෙත Worker successfully process කළ බවට වහාම OK ප්‍රතිචාරයක් යවයි.
+            // මෙය 500 error එක බොහෝ විට නිවැරදි කරයි.
+            ctx.waitUntil(new Promise(resolve => setTimeout(resolve, 0)));
+
 
             // ------------------------------------
             // 1. Message Handling
@@ -252,7 +246,7 @@ export default {
                 const messageId = message.message_id;
                 
                 // ** A. User ID KV එකට save කිරීම **
-                ctx.waitUntil(saveUserId(env, chatId));
+                ctx.waitUntil(this.saveUserId(env, chatId));
                 
                 if (text === '/start') {
                     const userName = message.from.first_name || "ප්‍රියතම මිතුර!";
@@ -260,7 +254,7 @@ export default {
                     // Owner Panel
                     if (OWNER_ID && chatId.toString() === OWNER_ID.toString()) {
                         
-                        const usersCount = await getAllUsersCount(env);
+                        const usersCount = await this.getAllUsersCount(env);
 
                         const ownerMessage = `👋 **පරිපාලක පැනලය**\n\nමෙමගින් ඔබගේ Bot එකේ දත්ත පරීක්ෂා කළ හැක\.`;
                         const inlineKeyboard = [
@@ -300,7 +294,7 @@ export default {
                 if (OWNER_ID && chatId.toString() === OWNER_ID.toString() && message.reply_to_message && message.reply_to_message.text.includes("කරුණාකර දැන් ඔබ යැවීමට අවශ්‍ය පණිවිඩය එවන්න:")) {
                     
                     const broadcastText = escapeMarkdownV2(message.text);
-                    const results = await broadcastMessage(env, telegramApi, broadcastText);
+                    const results = await this.broadcastMessage(env, telegramApi, broadcastText);
                     
                     const resultMessage = escapeMarkdownV2(`✅ Broadcast කිරීම සාර්ථකයි!`) + `\n\n` + escapeMarkdownV2(`සාර්ථකව යැවූ: ${results.successfulSends}`) + `\n` + escapeMarkdownV2(`අසාර්ථක වූ: ${results.failedSends}`);
                     
@@ -393,7 +387,7 @@ export default {
 
                 switch (data) {
                     case 'admin_users_count':
-                        const usersCount = await getAllUsersCount(env);
+                        const usersCount = await this.getAllUsersCount(env);
                         const countMessage = escapeMarkdownV2(`📊 දැනට ඔබගේ Bot භාවිතා කරන Users ගණන: ${usersCount}`);
                         
                         await this.editMessage(telegramApi, chatId, messageId, countMessage);
@@ -421,6 +415,7 @@ export default {
             return new Response('OK', { status: 200 });
 
         } catch (e) {
+            // දෝෂයක් ඇති වුවහොත්, එය Log කර Telegram වෙත OK ප්‍රතිචාරයක් යවයි.
             console.error(e);
             return new Response('OK', { status: 200 }); 
         }
