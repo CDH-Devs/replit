@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V27 (All Features: HTML Formatting, Broadcast, Start Messages, 403 Video Fix)
+ * Final Code V28 (Fixes TypeError: handlers.answerCallbackQuery is not a function)
  * Developer: @chamoddeshan
  */
 
@@ -16,7 +16,6 @@ const telegramApi = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 // --- Helper Functions ---
 
-// HTML Mode භාවිතා කරන නිසා, MarkdownV2 Escape කිරීමේ අවශ්‍යතාවක් නැත.
 function htmlBold(text) {
     return `<b>${text}</b>`;
 }
@@ -30,9 +29,9 @@ const PROGRESS_STATES = [
     { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙ింగ్…█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
     { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙ింగ్…██▒▒▒▒▒▒▒▒", percentage: "20%" },
     { text: "𝘿𝙤𝙬𝙣లోডিং…███▒▒▒▒▒▒▒", percentage: "30%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖𝙙𝙞ంగ్…████▒▒▒▒▒▒", percentage: "40%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖𝙙𝙞ంగ్…█████▒▒▒▒▒", percentage: "50%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖𝙙ింగ్…██████▒▒▒▒", percentage: "60%" },
+    { text: "𝙐𝙥𝙡𝙤𝙖𝙙ింగ్…████▒▒▒▒▒▒", percentage: "40%" },
+    { text: "𝙐𝙥𝙡𝙤𝙖딩…█████▒▒▒▒▒", percentage: "50%" },
+    { text: "𝙐𝙥𝙡𝙤𝙖డింగ్…██████▒▒▒▒", percentage: "60%" },
     { text: "𝙐𝙥𝙡𝙤𝙖డింగ్…███████▒▒▒", percentage: "70%" },
     { text: "𝙁𝙞𝙣𝙖𝙡𝙞𝙯𝙞𝙣𝙜…████████▒▒", percentage: "80%" },
     { text: "𝙁𝙞𝙣𝙖𝙡𝙞𝙯𝙞𝙣𝙜…█████████▒", percentage: "90%" },
@@ -40,7 +39,7 @@ const PROGRESS_STATES = [
 ];
 
 // *****************************************************************
-// ********** [ 2. WorkerHandlers Class (All Logic) ] ****************
+// ********** [ 2. WorkerHandlers Class (Complete Implementation) ] *
 // *****************************************************************
 
 class WorkerHandlers {
@@ -150,6 +149,23 @@ class WorkerHandlers {
         }
     }
     
+    // --- answerCallbackQuery (FIXED and IMPLEMENTED) ---
+    async answerCallbackQuery(callbackQueryId, text) {
+        try {
+            await fetch(`${telegramApi}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callback_query_id: callbackQueryId,
+                    text: text,
+                    show_alert: false, 
+                }),
+            });
+        } catch (e) {
+            console.error("answerCallbackQuery failed:", e);
+        }
+    }
+
     // --- sendVideo (With 403 Fix Headers) ---
     async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, inlineKeyboard = null) {
         
@@ -254,7 +270,7 @@ class WorkerHandlers {
         }
     }
     
-    // --- Broadcast Feature (FIXED & IMPLEMENTED) ---
+    // --- Broadcast Feature (Implemented) ---
     async broadcastMessage(fromChatId, originalMessageId) {
         if (!this.env.USER_DATABASE) return { successfulSends: 0, failedSends: 0 };
         
@@ -564,7 +580,7 @@ export default {
 
         } catch (e) {
             console.error("--- FATAL FETCH ERROR (Worker Logic Error) ---");
-            console.error("The worker failed to process the update:", e);
+            console.error("The worker failed to process the update: TypeError: " + e.message);
             console.error("-------------------------------------------------");
             return new Response('OK', { status: 200 }); 
         }
