@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V44 (Regex Fix for Thumbnail Class: fb_img -> lib-img-show)
+ * Final Code V46 (Adds a unique marker to the console log when the thumbnail is not found)
  * Developer: @chamoddeshan
  */
 
@@ -153,7 +153,7 @@ export default {
                             redirect: 'follow' 
                         });
                         
-                        // --- V42 Console Logging: FDown Response Check ---
+                        // --- Console Logging: FDown Response Check ---
                         console.log(`[DEBUG] FDown Fetch Status: ${fdownResponse.status}, OK: ${fdownResponse.ok}`);
                         if (!fdownResponse.ok) {
                             throw new Error(`FDown fetch failed with status ${fdownResponse.status}`);
@@ -163,11 +163,11 @@ export default {
                         let rawThumbnailLink = null;
                         
                         // 2. Get Thumbnail Link
-                        // V44 FIX: Changed the class from 'fb_img' to 'lib-img-show' based on inspect element
-                        const thumbnailRegex = /<img[^>]+class=["']?lib-img-show["']?[^>]*src=["']?([^"'\s]+)["']?/i;
+                        // V45 Regex: Using the unique style attribute
+                        const thumbnailRegex = /<img[^>]+style=["']?width:100%;max-height:240px;["']?[^>]*src=["']?([^"'\s]+)["']?/i;
                         let thumbnailMatch = resultHtml.match(thumbnailRegex);
                         
-                        // --- V43 Console Logging: Thumbnail Match and HTML Check ---
+                        // --- Console Logging: Thumbnail Match and HTML Check ---
                         console.log(`[DEBUG] Thumbnail Regex Match Found: ${!!thumbnailMatch}`);
 
                         if (thumbnailMatch && thumbnailMatch[1]) {
@@ -175,14 +175,16 @@ export default {
                             rawThumbnailLink = thumbnailMatch[1].replace(/&amp;/g, '&'); 
                             console.log(`[DEBUG] Raw Thumbnail URL (Encoded): ${thumbnailMatch[1]}`);
                         } else {
-                            // V43 FIX: If no thumbnail match, log the start of the received HTML
+                            // If no thumbnail match, log the start of the received HTML
                             console.error(`[ERROR] Thumbnail tag not found in HTML! Check FDown output.`);
+                            // V46 FIX: Add a unique marker to confirm this block was hit
+                            console.log(`[DEBUG] ---> THUMBNAIL FAIL BLOCK EXECUTED <---`); 
                             // Log the start of the received HTML response
                             console.log(`[DEBUG] Start of FDown HTML (first 500 chars):\n${resultHtml.substring(0, 500)}`); 
                         }
                         console.log(`[DEBUG] Final Thumbnail Link: ${rawThumbnailLink}`);
 
-                        // 3. (Optional) Check Video Links for completeness (Unnecessary for current test, but kept for context)
+                        // 3. (Optional) Check Video Links (Kept for full HTML analysis in Console Log)
                         let videoUrl = null;
                         const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in HD Quality.*<\/a>/i;
                         let match = resultHtml.match(hdLinkRegex);
