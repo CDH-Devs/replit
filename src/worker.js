@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V33 (Includes Broadcast Chunking and new /brod quick option)
+ * Final Code V34 (Uses copyMessage API to hide 'Forwarded from' tag)
  * Developer: @chamoddeshan
  */
 
@@ -270,7 +270,7 @@ class WorkerHandlers {
         }
     }
     
-    // --- Broadcast Feature (FIXED WITH BATCHING/CHUNKING) ---
+    // --- Broadcast Feature (FIXED WITH BATCHING/CHUNKING & copyMessage) ---
     async broadcastMessage(fromChatId, originalMessageId) {
         if (!this.env.USER_DATABASE) return { successfulSends: 0, failedSends: 0 };
         
@@ -286,7 +286,8 @@ class WorkerHandlers {
             const totalUsers = userKeys.length;
             console.log(`[BROADCAST] Total users found: ${totalUsers}`);
             
-            const getMessageUrl = `${telegramApi}/forwardMessage`; 
+            // Note: copyMessage API එක Forwarded from Tag එක ඉවත් කරයි.
+            const copyMessageUrl = `${telegramApi}/copyMessage`; 
             
             // Users ලා BATCHES වලට බෙදීම
             for (let i = 0; i < totalUsers; i += BATCH_SIZE) {
@@ -299,16 +300,16 @@ class WorkerHandlers {
                     if (userId.toString() === OWNER_ID.toString()) return; 
 
                     try {
-                        const forwardBody = {
+                        const copyBody = {
                             chat_id: userId,
                             from_chat_id: fromChatId,
-                            message_id: originalMessageId, 
+                            message_id: originalMessageId,
                         };
                         
-                        const response = await fetch(getMessageUrl, {
+                        const response = await fetch(copyMessageUrl, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(forwardBody),
+                            body: JSON.stringify(copyBody),
                         });
 
                         if (response.ok) {
@@ -316,10 +317,9 @@ class WorkerHandlers {
                         } else {
                             failedSends++;
                             const result = await response.json();
-                            // Block වූ Users ලා ඉවත් කිරීම
+                            // Block වූ Users ලා ඉවත් කිරීම (403: Forbidden)
                             if (result.error_code === 403) {
                                  console.log(`User ${userId} blocked the bot. Removing from KV.`);
-                                 // KV Delete කිරීම background task එකක් ලෙස ctx.waitUntil() තුළ ක්‍රියාත්මක වේ
                                  this.env.USER_DATABASE.delete(`user:${userId}`);
                             }
                         }
@@ -430,7 +430,7 @@ export default {
                     }
                 }
                 
-                // A2. Owner Quick Broadcast Option (/brod command) (නව විකල්පය)
+                // A2. Owner Quick Broadcast Option (/brod command)
                 if (isOwner && text && text.toLowerCase().startsWith('/brod') && message.reply_to_message) {
                     const messageToBroadcastId = message.reply_to_message.message_id; 
                     const originalChatId = chatId;
