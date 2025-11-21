@@ -1,9 +1,9 @@
 /**
  * src/index.js
- * Complete Code V59 (Hybrid Mode)
+ * Complete Code V60 (Enhanced Caption & Hybrid Mode)
  * - Video Link (Muxed/Working) is obtained via HTML Scraping (fdown.net/download.php).
- * - Thumbnail and Title are obtained via JSON API (https://fdown.isuru.eu.org/info).
- * - Logic: ALL videos attempt direct upload.
+ * - Metadata (Title, Thumbnail, Uploader, Duration, Views, Date) are obtained via JSON API.
+ * - Caption format: Title + Metadata (Uploader, Duration, Views, Date).
  */
 
 // *****************************************************************
@@ -22,6 +22,45 @@ const telegramApi = `https://api.telegram.org/bot${BOT_TOKEN}`;
 function htmlBold(text) {
     return `<b>${text}</b>`;
 }
+
+/**
+ * Seconds to H:MM:SS or M:SS format.
+ */
+function formatDuration(seconds) {
+    if (typeof seconds !== 'number' || seconds < 0) return 'N/A';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    
+    if (h > 0) {
+        return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    } else {
+        return `${m}:${String(s).padStart(2, '0')}`;
+    }
+}
+
+/**
+ * Creates the final formatted caption string based on API data.
+ */
+function formatCaption(data) {
+    const { videoTitle, uploader, duration, views, uploadDate } = data;
+    
+    const formattedDuration = formatDuration(duration);
+    const formattedViews = typeof views === 'number' ? views.toLocaleString('en-US') : views;
+    
+    // Main Title
+    let caption = htmlBold(videoTitle);
+    
+    // Metadata block
+    caption += `\n\n`;
+    caption += `👤 ${htmlBold(uploader)}\n`;
+    caption += `⏱️ Duration: ${htmlBold(formattedDuration)}\n`;
+    caption += `👁️ Views: ${htmlBold(formattedViews)}\n`;
+    caption += `📅 Uploaded: ${htmlBold(uploadDate)}`;
+
+    return caption;
+}
+
 
 // *****************************************************************
 // ********** [ 2. WorkerHandlers Class ] ****************************
@@ -62,6 +101,7 @@ class WorkerHandlers {
     async sendPhoto(chatId, photoUrl, replyToMessageId, caption = null) { 
         try {
             console.log(`[INFO] Attempting to send photo from URL: ${photoUrl.substring(0, 50)}...`);
+            // The caption parameter already contains the full formatted caption including the title
             const response = await fetch(`${telegramApi}/sendPhoto`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -69,7 +109,7 @@ class WorkerHandlers {
                     chat_id: chatId,
                     photo: photoUrl,
                     reply_to_message_id: replyToMessageId,
-                    caption: caption || htmlBold("✅ Thumbnail Downloaded!"),
+                    caption: caption || htmlBold("✅ Thumbnail Downloaded!"), // Use the passed caption
                     parse_mode: 'HTML',
                 }),
             });
@@ -96,7 +136,6 @@ class WorkerHandlers {
             const videoResponse = await fetch(videoUrl, {
                 method: 'GET',
                 headers: {
-                    // ⭐️ IMPORTANT: These headers are crucial for getting a working file
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                     'Referer': 'https://fdown.net/', 
                     'Accept': 'video/mp4,video/webm,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
@@ -107,7 +146,6 @@ class WorkerHandlers {
             if (videoResponse.status !== 200) {
                 console.error(`[DEBUG] Video Fetch Failed! Status: ${videoResponse.status} for URL: ${videoUrl}`);
                 if (videoResponse.body) { await videoResponse.body.cancel(); }
-                // Send an error message if CDN link fetching fails
                 await this.sendMessage(telegramApi, chatId, htmlBold('⚠️ වීඩියෝව කෙලින්ම Upload කිරීමට අසාර්ථකයි. CDN වෙත පිවිසීමට නොහැක.'), replyToMessageId);
                 return null; 
             }
@@ -152,7 +190,6 @@ class WorkerHandlers {
             
             if (!telegramResponse.ok) {
                 console.error(`[DEBUG] sendVideo API Failed! Result:`, telegramResult);
-                // Send a clean error message on Telegram API failure
                 await this.sendMessage(telegramApi, chatId, htmlBold(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Error: ${telegramResult.description || 'නොදන්නා දෝෂයක්.'})`), replyToMessageId);
                 return null;
             } else {
@@ -225,7 +262,7 @@ class WorkerHandlers {
 // *****************************************************************
 
 /**
- * ⭐️ Function 1: Get Thumbnail/Title from JSON API (V57 Logic)
+ * ⭐️ Function 1: Get Thumbnail/Title/Metadata from JSON API (V57 Logic)
  */
 async function getApiMetadata(link) {
     try {
@@ -248,6 +285,10 @@ async function getApiMetadata(link) {
         
         let rawThumbnailLink = null;
         let videoTitle = 'Facebook Video';
+        let uploader = 'Unknown Uploader';
+        let duration = 0;
+        let views = 0;
+        let uploadDate = 'N/A';
         
         if (info) {
             if (info.thumbnail) {
@@ -256,16 +297,32 @@ async function getApiMetadata(link) {
             if (info.title) {
                 videoTitle = info.title;
             }
+            // Extracting new fields
+            uploader = info.uploader || info.page_name || 'Unknown Uploader';
+            duration = info.duration || 0;
+            views = info.view_count || info.views || 0;
+            uploadDate = info.upload_date || 'N/A';
         }
 
         return {
             thumbnailLink: rawThumbnailLink,
-            videoTitle: videoTitle
+            videoTitle: videoTitle,
+            uploader: uploader,
+            duration: duration,
+            views: views,
+            uploadDate: uploadDate
         };
 
     } catch (e) {
         console.warn("[WARN] API Metadata fetch failed:", e.message);
-        return { thumbnailLink: null, videoTitle: "Facebook Video" };
+        return { 
+            thumbnailLink: null, 
+            videoTitle: "Facebook Video", 
+            uploader: 'Unknown Uploader',
+            duration: 0,
+            views: 0,
+            uploadDate: 'N/A'
+        };
     }
 }
 
@@ -336,7 +393,7 @@ export default {
 
             const chatId = message.chat.id;
             const messageId = message.message_id;
-            const text = message.text ? message.text.trim() : null; // Original Facebook Link
+            const text = message.text ? message.text.trim() : null; 
             
             const userName = message.from.first_name || "User"; 
 
@@ -363,22 +420,24 @@ export default {
                     );
                     
                     try {
-                        // ⭐️ STEP 1: Get Thumbnail/Title from JSON API (Fast)
+                        // ⭐️ STEP 1: Get ALL Metadata from JSON API
                         const apiData = await getApiMetadata(text);
-                        const { thumbnailLink, videoTitle } = apiData;
+                        const { thumbnailLink, videoTitle, uploader, duration, views, uploadDate } = apiData;
+
+                        // Generate the final formatted caption
+                        const finalCaption = formatCaption(apiData);
 
                         // ⭐️ 1. Thumbnail Sending Logic (Used to display progress/title)
                         let photoMessageId = null;
                         
                         if (thumbnailLink) {
                             
-                            let caption = htmlBold(videoTitle) + `\n\n✅ ${htmlBold('Thumbnail Downloaded!')}`;
-                            
+                            // Send thumbnail with the full formatted caption
                             photoMessageId = await handlers.sendPhoto(
                                 chatId, 
                                 thumbnailLink, 
                                 messageId,
-                                caption
+                                finalCaption
                             );
                             
                             if (photoMessageId && initialMessage) {
@@ -394,7 +453,7 @@ export default {
                              photoMessageId = initialMessage;
                         }
 
-                        // ⭐️ STEP 2: Get WORKING Video Link from HTML Scraper (Reliable Link)
+                        // ⭐️ STEP 2: Get WORKING Video Link from HTML Scraper
                         const videoUrl = await scrapeVideoLink(text);
 
                         // ⭐️ 2. Upload Logic
@@ -407,17 +466,13 @@ export default {
                             // Update the message text to show uploading status
                             await handlers.editMessageText(chatId, statusMessageId, uploadText);
 
-                            const caption = htmlBold(videoTitle); // Use the title from the API
-                            
-                            // sendVideo function uses the strong Referer headers.
-                            const sentVideoId = await handlers.sendVideo(chatId, videoUrl, caption, messageId, thumbnailLink);
+                            // The sendVideo function uses the strong Referer headers.
+                            const sentVideoId = await handlers.sendVideo(chatId, videoUrl, finalCaption, messageId, thumbnailLink);
 
                             if (sentVideoId) {
                                 // Success: Delete the status message
                                 handlers.deleteMessage(chatId, statusMessageId);
-                            } else {
-                                // Failure: Error message already handled inside sendVideo
-                            }
+                            } 
 
                         } else {
                              // No format found error
