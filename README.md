@@ -1,29 +1,69 @@
-ForexNewsBot
+# 🚀 Facebook Video Downloader Telegram Bot (Cloudflare Worker)
 
-A Telegram bot that fetches latest news from ForexFactory and posts Sinhala translations to your Telegram group/channel.
+**🔥 C D H Corporation ©**
 
-Features
+<p align="center">
+  <a href="https://t.me/chamoddeshan">
+    <img src="https://img.shields.io/badge/Developer-@chamoddeshan-blue.svg?style=for-the-badge&logo=telegram" alt="Developer Telegram">
+  </a>
+  <a href="https://developers.cloudflare.com/workers/">
+    <img src="https://img.shields.io/badge/Platform-Cloudflare%20Workers-orange.svg?style=for-the-badge&logo=cloudflare" alt="Cloudflare Workers">
+  </a>
+  <a href="https://www.javascript.com/">
+    <img src="https://img.shields.io/badge/Language-JavaScript-F7DF1E.svg?style=for-the-badge&logo=javascript" alt="JavaScript">
+  </a>
+</p>
 
-- Scrapes news headlines from ForexFactory calendar  
-- Translates headlines using Google Translate  
-- Posts to Telegram channel or group  
+## 🌟 ව්‍යාපෘති දළ විශ්ලේෂණය (Project Overview)
 
-Setup
+මෙය **Cloudflare Workers** මත ක්‍රියාත්මක වන Telegram Bot එකක් වන අතර, පරිශීලකයින්ට **Facebook වීඩියෝ** සෘජුවම බාගත (Download) කිරීමට ඉඩ සලසයි. Bot එක ඉහළ කාර්ය සාධනයක් සහ වේගයක් සඳහා සකසා ඇති අතර, ප්‍රධාන වශයෙන් ගොනු හුවමාරුව (File Transfer) සහ පරිශීලක කළමනාකරණය (User Management) සඳහා **Telegram API** භාවිතා කරයි.
 
-1. Clone this repo.  
-2. cd ForexNewsBot  
-3. pip install -r requirements.txt  
-4. Edit bot.py with your BOT_TOKEN and CHAT_ID.  
-5. Run python bot.py  
+---
 
-Deployment
+## ✨ ප්‍රධාන විශේෂාංග (Key Features)
 
-- Use a cloud service (e.g., Render, Railway) or a VPS  
-- Make sure the script runs continuously (use screen, pm2, or service config)  
-- Ensure your Telegram bot is admin in the channel or group  
+* **🔗 Facebook Video Download:** ඕනෑම පොදු (Public) Facebook වීඩියෝ සබැඳියක් (Link) බාරගෙන වීඩියෝව සෘජුවම Telegram වෙත යවයි.
+* **🖼️ Metadata සහ Caption:** වීඩියෝවේ **Title**, **Uploader**, **Duration**, **Views**, සහ **Upload Date** වැනි සම්පූර්ණ තොරතුරු සහිත ආකර්ෂණීය Caption එකක් යවයි.
+* **⏳ Progress Simulation:** වීඩියෝව හඳුනාගැනීමේදී සහ උඩුගත කිරීමේදී (Uploading) පරිශීලකයාට තත්ත්වය පෙන්වීමට **Progress Bar** එකක් පෙන්වයි.
+* **⚠️ Large File Handling:** 50MB ට වඩා විශාල ගොනු සඳහා, Bot එක **සෘජු බාගත කිරීමේ Link (Direct Download Link)** එකක් සපයන අතර, Telegram වෙත උඩුගත කිරීම වළක්වයි.
+* **👑 Admin Panel (Bot Owner පමණි):**
+    * `/start` හරහා පිවිසිය හැකි Admin මෙනුව.
+    * **📊 Users Count:** Bot භාවිතා කරන මුළු පරිශීලකයින් සංඛ්‍යාව බැලීමේ හැකියාව.
+    * **📣 Broadcast:** සියලුම පරිශීලකයින් වෙත පණිවිඩයක් (Text, Photo, Video) යැවීමේ හැකියාව.
+* **⚙️ Performance & Efficiency:** Cloudflare Workers හි serverless ගෘහ නිර්මාණ ශිල්පය (Architecture) හේතුවෙන් අඩු ප්‍රමාදයක් (Latency) සහ ඉහළ විශ්වසනීයත්වයක් සපයයි.
 
-Notes
+---
 
-- ForexFactory site structure may change; selectors might need updating  
-- Translation quality depends on Google Translate
-```
+## 📁 කේත ව්‍යුහය (Code Structure)
+
+ව්‍යාපෘතිය පහසුවෙන් කළමනාකරණය කිරීම සඳහා ප්‍රධාන ගොනු 5කට වෙන් කර ඇත. **`index.js`** ගොනුව ප්‍රධාන ඇතුල්වීමේ ලක්ෂ්‍යය ලෙස ක්‍රියා කරන අතර අනෙකුත් සියලුම මොඩියුල (Modules) ආයාත (Import) කරයි.
+
+| ගොනුව (File) | කාර්යභාරය (Responsibility) | විස්තරය (Description) |
+| :--- | :--- | :--- |
+| **`index.js`** | **Entry Point** | Cloudflare Worker හි `fetch` ශ්‍රිතය අඩංගු ප්‍රධාන ගොනුව. සියලුම logic ආරම්භ කර, incoming updates (`message` හෝ `callback_query`) හසුරුවයි. |
+| **`handlers.js`** | **Bot Logic & API Interaction** | `WorkerHandlers` class එක අඩංගු වේ. Telegram API ඇමතුම් (sendMessage, sendVideo, editMessage), පරිශීලක දත්ත සමුදාය (User DB) හැසිරවීම, සහ Broadcast logic මෙහි ඇත. |
+| **`api.js`** | **External Data Fetching** | Facebook වීඩියෝ Metadata ලබා ගැනීමට සහ බාගත කිරීමේ සබැඳිය (Download Link) scrape කිරීමට අවශ්‍ය ශ්‍රිත (`getApiMetadata`, `scrapeVideoLinkAndThumbnail`) අඩංගු වේ. |
+| **`helpers.js`** | **Formatting** | Text Bold කිරීම (`htmlBold`) සහ වීඩියෝ කාලය (Duration) ආකෘතිකරණය (`formatDuration`, `formatCaption`) වැනි කුඩා උපකාරක ශ්‍රිත අඩංගු වේ. |
+| **`config.js`** | **Configurations** | `BOT_TOKEN`, `OWNER_ID`, `API_URL`, `MAX_FILE_SIZE_BYTES`, සහ `PROGRESS_STATES` වැනි සියලුම නියතයන් (Constants) අඩංගු වේ. |
+
+---
+
+## 🛠️ ස්ථාපනය සහ යෙදවීම (Setup & Deployment)
+
+### පියවර 1: අවශ්‍යතා (Prerequisites)
+
+1.  **Telegram Bot Token:** **BotFather** හරහා ලබාගත් ඔබගේ Bot Token එක.
+2.  **Cloudflare Account:** Cloudflare ගිණුමක් සහ Wrangler CLI ස්ථාපනය කර තිබීම.
+3.  **Durable Object/KV (Optional, නමුත් නිර්දේශිතයි):** පරිශීලක ගණනය (User Count) සහ Broadcast කිරීම සඳහා **Cloudflare KV Namespace** එකක් සකස් කිරීම.
+
+### පියවර 2: ගොනු යාවත්කාලීන කිරීම (Update Files)
+
+**`config.js`** ගොනුව විවෘත කර, ඔබගේ තොරතුරු යොදා යාවත්කාලීන කරන්න:
+
+```javascript
+// config.js
+
+const BOT_TOKEN = 'ඔබගේ_BOT_TOKEN_මෙතන_ඇතුලත්_කරන්න'; 
+const OWNER_ID = 'ඔබගේ_Telegram_USER_ID_මෙතන_ඇතුලත්_කරන්න'; 
+const API_URL = "[https://fdown.isuru.eu.org/info](https://fdown.isuru.eu.org/info)"; // මෙය වෙනස් නොකරන්න
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
