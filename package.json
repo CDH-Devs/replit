@@ -2,7 +2,7 @@
   "name": "facebookdownbot",
   "version": "1.0.0",
   "description": "Telegram Bot for downloading Facebook videos, deployed on Cloudflare Workers.",
-  "main": "src/local.js",
+  "main": "src/worker.js",
   "type": "module",
   "scripts": {
     "start": "bun run src/local.js",
@@ -10,7 +10,6 @@
     "deploy": "npx wrangler deploy"
   },
   "dependencies": {
-    "dotenv": "^16.6.1",
     "grammy": "^1.38.3"
   },
   "devDependencies": {
