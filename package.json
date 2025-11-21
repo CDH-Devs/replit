@@ -2,7 +2,7 @@
   "name": "facebookdownbot",
   "version": "1.0.0",
   "description": "Telegram Bot for downloading Facebook videos, deployed on Cloudflare Workers.",
-  "main": "src/worker.js",
+  "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "bun run src/local.js",
