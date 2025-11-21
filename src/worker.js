@@ -13,7 +13,7 @@ const OWNER_ID = '1901997764';
 const API_URL = "https://fdown.isuru.eu.org/info"; // JSON API for Metadata/Thumbnail
 
 // --- NEW CONSTANT: Max file size for direct Telegram upload (50 MB in Bytes) ---
-const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; 
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB limit
 // *****************************************************************
 
 // Telegram API Base URL
@@ -231,7 +231,6 @@ class WorkerHandlers {
         ];
 
         // Extracts the bolded title from the caption for a cleaner message
-        // This is a simplification; in a real scenario, you'd extract the title more robustly.
         const titleMatch = caption.match(/<b>(.*?)<\/b>/);
         const videoTitle = titleMatch ? titleMatch[1] : 'Video File';
         
@@ -459,7 +458,7 @@ async function getApiMetadata(link) {
         let duration = 0;
         let views = 0;
         let uploadDate = 'N/A';
-        let filesize = 0; // <<< NEW: Add filesize variable
+        let filesize = 0; // <<< NEW: Filesize Variable Added
         
         if (info) {
             if (info.thumbnail) {
@@ -482,7 +481,7 @@ async function getApiMetadata(link) {
             duration: duration,
             views: views,
             uploadDate: uploadDate,
-            filesize: filesize // <<< NEW: Return filesize
+            filesize: filesize // <<< NEW: Return Filesize
         };
 
     } catch (e) {
@@ -494,7 +493,7 @@ async function getApiMetadata(link) {
             duration: 0,
             views: 0,
             uploadDate: 'N/A',
-            filesize: 0 // <<< NEW: Default to 0
+            filesize: 0 // <<< NEW: Default Filesize
         };
     }
 }
@@ -719,7 +718,7 @@ export default {
                         // 2. Start Scraping and Fetching
                         try {
                             // Fetch Metadata (Title/Uploader/Date/Duration/Filesize) from API
-                            const apiData = await getApiMetadata(text);
+                            const apiData = await getApiMetadata(text); // <<< Now fetches filesize
                             const finalCaption = formatCaption(apiData);
                             
                             // Fetch Download Link and Fallback Thumbnail from Scraper
@@ -735,7 +734,7 @@ export default {
                                 handlers.progressActive = false; 
                                 
                                 if (apiData.filesize > MAX_FILE_SIZE_BYTES) {
-                                    // 3.1. Send Download Link (If too large)
+                                    // 3.1. Send Download Link (If too large - NEW LOGIC)
                                     if (progressMessageId) {
                                         await handlers.deleteMessage(chatId, progressMessageId);
                                     }
@@ -748,7 +747,7 @@ export default {
                                     );
                                     
                                 } else {
-                                    // 3.2. Send Video Directly (If within limit)
+                                    // 3.2. Send Video Directly (If within limit - OLD LOGIC)
                                     if (progressMessageId) {
                                         // Delete the progress message before sending the final video
                                         await handlers.deleteMessage(chatId, progressMessageId);
