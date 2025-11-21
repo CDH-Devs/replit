@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Complete Code V50 (Fixes BUTTON_DATA_INVALID error by using Cloudflare KV for temporary storage)
+ * Complete Code V51 (Removes immediate KV deletion to prevent "Expired" error on double-click/race condition)
  * Developer: @chamoddeshan
  */
 
@@ -254,7 +254,8 @@ export default {
 
                     // 1. Acknowledge and Update the Button Message
                     const loadingText = htmlBold(`🔄 ${quality} වීඩියෝව බාගත කිරීම ආරම්භ වේ...`);
-                    await handlers.editMessageText(chatId, messageId, loadingText, []); // Remove buttons
+                    // Note: We remove buttons here, but we don't delete the KV yet.
+                    await handlers.editMessageText(chatId, messageId, loadingText, []); 
                     await handlers.answerCallbackQuery(callbackQuery.id, `Starting ${quality} download...`);
 
                     try {
@@ -269,6 +270,7 @@ export default {
                         // Retrieve data from KV
                         const kvDataString = await handlers.kv.get(videoKey);
                         if (!kvDataString) {
+                            // This is the error message the user is seeing due to the race condition/double click
                             await handlers.editMessageText(chatId, messageId, htmlBold('❌ වීඩියෝ තොරතුරු කල් ඉකුත් වී ඇත. නැවත සබැඳිය එවන්න.'));
                             return new Response('OK', { status: 200 });
                         }
@@ -277,9 +279,14 @@ export default {
                         videoTitle = kvData.title || videoTitle;
                         downloadLink = kvData.qualityMap[quality];
 
-                        // Delete KV entry immediately after reading
-                        await handlers.kv.delete(videoKey);
-                        console.log(`[SUCCESS] KV cache cleared for key: ${videoKey}`);
+                        // ***********************************************
+                        // *** FIX: REMOVED KV DELETION STEP ***
+                        // The entry will now expire automatically after 1 hour (TTL). 
+                        // This prevents the "Expired" error on duplicate/race condition clicks.
+                        // await handlers.kv.delete(videoKey); 
+                        // console.log(`[SUCCESS] KV cache cleared for key: ${videoKey}`);
+                        // ***********************************************
+                        
                         // --- End KV Read and Process Logic ---
                         
                         if (!downloadLink) {
