@@ -475,6 +475,17 @@ export default {
                                     }
                                 });
 
+                                // Sort qualities: prioritize formats with audio (lower resolutions typically have audio)
+                                // Higher resolutions on Facebook are often video-only streams
+                                const qualityOrder = ['360p', '480p', '720p', '1080p', '1920p'];
+                                availableQualities.sort((a, b) => {
+                                    const aIndex = qualityOrder.indexOf(a);
+                                    const bIndex = qualityOrder.indexOf(b);
+                                    const aSort = aIndex === -1 ? 999 : aIndex;
+                                    const bSort = bIndex === -1 ? 999 : bIndex;
+                                    return aSort - bSort;
+                                });
+
                                 // Store essential data (URL map and title) in KV. Expires after 3600 seconds (1 hour).
                                 const kvData = { 
                                     title: videoTitle, 
@@ -485,6 +496,7 @@ export default {
                                 console.log(`[SUCCESS] Data stored in KV with key: ${videoKey}`);
                                 
                                 // Create buttons: [[B1], [B2], [B3], ...] - each button on a new row.
+                                // Note: Lower qualities are listed first as they typically include audio
                                 const qualityButtons = availableQualities.map(quality => [{
                                     text: `📥 Download ${quality}`,
                                     // Use the short key and quality for the callback data
