@@ -10,6 +10,7 @@ class WorkerHandlers {
     constructor(env) {
         this.env = env;
         this.progressActive = true; 
+        // BOT_TOKEN භාවිතයෙන් telegramApi URL එක සාදයි
         this.telegramApi = `https://api.telegram.org/bot${this.env.BOT_TOKEN}`; 
     }
     
@@ -124,19 +125,32 @@ class WorkerHandlers {
     }
 
     async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId) {
+        // MAX_FILE_SIZE_BYTES env එකෙන් ලබා ගනී
         const MAX_FILE_SIZE_MB = (parseInt(this.env.MAX_FILE_SIZE_BYTES) || 52428800) / (1024 * 1024);
         
-        const inlineKeyboard = [
-            [{ text: '⬇️ Download Video', url: videoUrl }], 
-            [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
-        ];
-
         const titleMatch = caption.match(/Title: (.*?)(\n|$)/i);
         const videoTitle = titleMatch ? titleMatch[1].replace(/<\/?b>/g, '').trim() : 'Video File';
         
-        const largeFileMessage = htmlBold("⚠️ Large file detected.") + `\n\n`
-                               + `The video file size (${MAX_FILE_SIZE_MB}MB limit) is too large for direct Telegram upload. Please use the button below to download the file directly.\n\n`
-                               + htmlBold("Title:") + ` ${videoTitle}`; 
+        // 1. Base64 Encoding භාවිතයෙන් URL සහ Title එක සංකේතනය (Encode) කරයි.
+        const encodedVideoUrl = btoa(videoUrl);
+        const encodedTitle = btoa(videoTitle);
+        
+        // 2. ⚠️ වැදගත්: මෙය ඔබේ සැබෑ GitHub Pages URL එකට වෙනස් කරන්න ⚠️
+        const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; 
+        
+        // URL එකට query parameters ලෙස සංකේතනය කළ දත්ත යවයි.
+        const redirectLink = `${WEB_PAGE_BASE_URL}?url=${encodedVideoUrl}&title=${encodedTitle}`;
+        
+        const inlineKeyboard = [
+            // දැන්, බොත්තම ඔබගේ වෙබ් පිටුවට යොමු කරනු ඇත.
+            [{ text: '🌐 Download Link ලබා ගන්න', url: redirectLink }], 
+            [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
+        ];
+
+        const largeFileMessage = htmlBold("⚠️ File Size Limit Reached!") + `\n\n`
+                           + `The video file exceeds the Telegram upload limit (${MAX_FILE_SIZE_MB}MB).\n`
+                           + `Please click the button below to get the direct download link from our website.\n\n`
+                           + htmlBold("Title:") + ` ${videoTitle}`; 
 
         await this.sendMessage(
             chatId, 
