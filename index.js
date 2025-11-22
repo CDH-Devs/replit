@@ -1,21 +1,28 @@
+// index.js (Cloudflare Worker Main File)
+
 import { WorkerHandlers } from './handlers';
 import { getApiMetadata, scrapeVideoLinkAndThumbnail } from './api';
 import { formatCaption, htmlBold } from './helpers';
-import { PROGRESS_STATES } from './config';
+import { OWNER_ID, PROGRESS_STATES } from './config';
 
 export default {
     
     async fetch(request, env, ctx) {
+        
+        // POST method එකක් නොවේ නම් සරල ප්‍රතිචාරයක් යවයි.
         if (request.method !== 'POST') {
             return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
         }
         
+        // Handlers class එක initialize කරයි.
         const handlers = new WorkerHandlers(env);
         
+        // පෙරනිමි inline keyboard
         const userInlineKeyboard = [
             [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
         ];
         
+        // Progress bar එකේ ආරම්භක තත්ත්වය
         const initialProgressKeyboard = [
              [{ text: PROGRESS_STATES[0].text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
         ];
@@ -29,108 +36,69 @@ export default {
                  return new Response('OK', { status: 200 });
             }
             
-            ctx.waitUntil(new Promise(resolve => setTimeout(resolve, 0)));
-
+            // ⚠️ වැදගත්: මෙය Telegram වෙත සෘජු ප්‍රතිචාරය අවහිර නොකළ යුතුය.
+            // වෙනත් කෙටි tasks මෙහිදී run කළ හැකියි.
+            
             if (message) { 
                 const chatId = message.chat.id;
                 const messageId = message.message_id;
                 const text = message.text ? message.text.trim() : null; 
-                const isOwner = env.OWNER_ID && chatId.toString() === env.OWNER_ID.toString();
-                
-                const userName = message.from.first_name || "User"; 
-
+                const isOwner = OWNER_ID && chatId.toString() === OWNER_ID.toString();
+               
+                // User ID එක Database එකේ save කරයි.
                 ctx.waitUntil(handlers.saveUserId(chatId));
 
-                if (isOwner && message.reply_to_message) {
-                    const repliedMessage = message.reply_to_message;
+                // ----------------------------------------------------
+                // 1. Admin Commands
+                // ----------------------------------------------------
+                if (isOwner) {
+                    if (text && text.startsWith('/admin')) {
+                        const adminKeyboard = [
+                            [{ text: '📊 Users Count', callback_data: 'admin_users_count' }],
+                            [{ text: '📣 Broadcast Message', callback_data: 'admin_broadcast' }]
+                        ];
+                        await handlers.sendMessage(chatId, htmlBold("⚙️ Admin Panel"), messageId, adminKeyboard);
+                        return new Response('OK', { status: 200 });
+                    }
                     
-                    if (repliedMessage.text && repliedMessage.text.includes("Please reply with the message you want to broadcast:")) {
+                    // Broadcast Handling
+                    if (message.reply_to_message && message.reply_to_message.text && message.reply_to_message.text.includes("📣 Broadcast Message")) {
+                        const originalMessageId = message.message_id;
+                        await handlers.sendMessage(chatId, htmlBold("⏳ Starting broadcast... Please wait. This may take a while."), messageId);
                         
-                        const messageToBroadcastId = messageId; 
-                        const originalChatId = chatId;
-                        const promptMessageId = repliedMessage.message_id; 
-
-                        await handlers.editMessage(chatId, promptMessageId, htmlBold("📣 Broadcast started. Please wait."));
-                        
+                        // Broadcast එක ctx.waitUntil හරහා background එකේ run කරයි
                         ctx.waitUntil((async () => {
-                            try {
-                                const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
-                                
-                                const resultMessage = htmlBold('Broadcast Complete ✅') + `\n\n`
-                                                    + htmlBold(`🚀 Successful: `) + results.successfulSends + '\n'
-                                                    + htmlBold(`❗️ Failed/Blocked: `) + results.failedSends;
-                                
-                                await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
-
-                            } catch (e) {
-                                await handlers.sendMessage(chatId, htmlBold("❌ Broadcast Process Failed.") + `\n\nError: ${e.message}`, messageToBroadcastId);
-                            }
-                        })()); 
+                            const { successfulSends, failedSends } = await handlers.broadcastMessage(chatId, originalMessageId);
+                            const resultText = htmlBold("✅ Broadcast Complete!") + `\n\n`
+                                             + `🟢 Successful Sends: ${successfulSends}\n`
+                                             + `🔴 Failed Sends: ${failedSends}`;
+                            await handlers.sendMessage(chatId, resultText, originalMessageId);
+                        })());
 
                         return new Response('OK', { status: 200 });
                     }
                 }
                 
-                if (isOwner && text && text.toLowerCase().startsWith('/brod') && message.reply_to_message) {
-                    const messageToBroadcastId = message.reply_to_message.message_id; 
-                    const originalChatId = chatId;
-                    
-                    await handlers.sendMessage(chatId, htmlBold("📣 Quick Broadcast started..."), messageId);
-
-                    ctx.waitUntil((async () => {
-                        try {
-                            const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
-                            
-                            const resultMessage = htmlBold('Quick Broadcast Complete ✅') + `\n\n`
-                                                + htmlBold(`🚀 Successful: `) + results.successfulSends + '\n'
-                                                + htmlBold(`❗️ Failed/Blocked: `) + results.failedSends;
-                            
-                            await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
-
-                        } catch (e) {
-                            await handlers.sendMessage(chatId, htmlBold("❌ Quick Broadcast failed.") + `\n\nError: ${e.message}`, messageId);
-                        }
-                    })());
-
-                    return new Response('OK', { status: 200 });
-                }
-                // --- End Admin/Broadcast Logic ---
-                
-                if (text && text.toLowerCase().startsWith('/start')) {
-                    
-                    if (isOwner) {
-                        const ownerText = htmlBold("👑 Welcome Back, Admin!") + "\n\nThis is your Admin Control Panel.";
-                        const adminKeyboard = [
-                            [{ text: '📊 Users Count', callback_data: 'admin_users_count' }],
-                            [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }],
-                            [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
-                        ];
-                        await handlers.sendMessage(chatId, ownerText, messageId, adminKeyboard);
-                    } else {
-                        const userText = `👋 <b>Hello Dear ${userName}!</b> 💁‍♂️ You can easily <b>Download Facebook Videos</b> using this BOT.
-
-🎯 This BOT is <b>Active 24/7</b>.🔔 
-
-◇───────────────◇
-
-🚀 <b>Developer</b> : @chamoddeshan
-🔥 <b>C D H Corporation ©</b>
-
-◇───────────────◇`;
-                        
-                        await handlers.sendMessage(chatId, userText, messageId, userInlineKeyboard);
-                    }
+                // ----------------------------------------------------
+                // 2. Start Command
+                // ----------------------------------------------------
+                if (text === '/start') {
+                    const welcomeMessage = htmlBold("👋 Welcome to Facebook Video Downloader Bot!") + "\n\n"
+                                           + "Just send me a **Facebook video link** (e.g., `https://www.facebook.com/...`) and I will process it for you." + "\n\n"
+                                           + "Developer: @chamoddeshan";
+                    await handlers.sendMessage(chatId, welcomeMessage, messageId);
                     return new Response('OK', { status: 200 });
                 }
 
+                // ----------------------------------------------------
+                // 3. Link Handling Logic (Video Download)
+                // ----------------------------------------------------
                 if (text) { 
-                    const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
+                    const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me|m\.facebook\.com|mbasic\.facebook\.com)/i.test(text);
                     
                     if (isLink) {
                         
-                        // Action: Send 'typing'
-                        ctx.waitUntil(handlers.sendAction(chatId, 'typing'));
-
+                        // A. Initial Progress Message
                         const initialText = htmlBold('⌛️ Detecting video... Please wait a moment.'); 
                         const progressMessageId = await handlers.sendMessage(
                             chatId, 
@@ -139,107 +107,127 @@ export default {
                             initialProgressKeyboard
                         );
                         
+                        // B. Start Progress Simulation (Background Task)
+                        // ⚠️ Bot reply එක Block නොකිරීමට මෙය ctx.waitUntil තුළට යොදන්න.
                         if (progressMessageId) {
                             ctx.waitUntil(handlers.simulateProgress(chatId, progressMessageId, messageId));
                         }
                         
-                        try {
-                            const apiData = await getApiMetadata(text, env.API_URL);
-                            const finalCaption = formatCaption(apiData);
-                            
-                            const scraperData = await scrapeVideoLinkAndThumbnail(text);
-                            const videoUrl = scraperData.videoUrl;
-                            
-                            const finalThumbnailLink = apiData.thumbnailLink || scraperData.fallbackThumbnail;
+                        // C. Main Processing Logic
+                        ctx.waitUntil((async () => {
+                            try {
+                                
+                                ctx.waitUntil(handlers.sendAction(chatId, 'typing'));
+                                
+                                // 1. API හරහා Metadata ලබා ගනී
+                                const apiData = await getApiMetadata(text);
+                                const finalCaption = formatCaption(apiData);
+                                
+                                // 2. Scraper හරහා Download Link සහ Fallback Thumbnail ලබා ගනී
+                                const scraperData = await scrapeVideoLinkAndThumbnail(text);
+                                const videoUrl = scraperData.videoUrl;
+                                
+                                // 3. අවසන් Thumbnail Link එක තීරණය කරයි (API එකේ ඇති Link එකට ප්‍රමුඛත්වය දෙයි)
+                                const finalThumbnailLink = apiData.thumbnailLink || scraperData.fallbackThumbnail;
 
-                            
-                            if (videoUrl) {
-                                handlers.progressActive = false; 
                                 
-                                const MAX_FILE_SIZE = parseInt(env.MAX_FILE_SIZE_BYTES) || 52428800; // Default 50MB
-                                
-                                if (apiData.filesize > MAX_FILE_SIZE) { 
-                                    if (progressMessageId) {
-                                        await handlers.deleteMessage(chatId, progressMessageId);
-                                    }
+                                if (videoUrl) {
+                                    handlers.progressActive = false; // Progress simulation නවත්වයි
                                     
-                                    await handlers.sendLinkMessage(
-                                        chatId,
-                                        videoUrl, 
-                                        finalCaption, 
-                                        messageId
-                                    );
-                                    
-                                } else {
-                                    if (progressMessageId) {
-                                        await handlers.deleteMessage(chatId, progressMessageId);
-                                    }
-                                    
-                                    // Action: Send 'upload_video'
-                                    ctx.waitUntil(handlers.sendAction(chatId, 'upload_video'));
-                                    
-                                    try {
-                                        await handlers.sendVideo(
-                                            chatId, 
-                                            videoUrl, 
-                                            finalCaption, 
-                                            messageId, 
-                                            finalThumbnailLink, 
-                                            userInlineKeyboard
-                                        ); 
-                                    } catch (e) {
-                                        // Fallback to sending direct link if sendVideo fails (e.g., file too big/timeout)
+                                    // 50MB (config.js වෙතින්) සීමාවට වඩා විශාලදැයි පරීක්ෂා කරයි
+                                    if (apiData.filesize > MAX_FILE_SIZE_BYTES) { 
+                                        
+                                        if (progressMessageId) {
+                                            await handlers.deleteMessage(chatId, progressMessageId);
+                                        }
+                                        
+                                        // සීමාව ඉක්මවා ගියහොත් Download Link එක වෙබ් පිටුවට යවයි
                                         await handlers.sendLinkMessage(
                                             chatId,
                                             videoUrl, 
                                             finalCaption, 
                                             messageId
                                         );
+                                        
+                                    } else {
+                                        // ගොනුව Telegram සීමාවට යටත් නම්, එය Upload කරයි
+                                        if (progressMessageId) {
+                                            await handlers.deleteMessage(chatId, progressMessageId);
+                                        }
+                                        
+                                        ctx.waitUntil(handlers.sendAction(chatId, 'upload_video'));
+                                        
+                                        try {
+                                            await handlers.sendVideo(
+                                                chatId, 
+                                                videoUrl, 
+                                                finalCaption, 
+                                                messageId, 
+                                                finalThumbnailLink, // Thumbnail Link එක යවයි
+                                                userInlineKeyboard
+                                            ); 
+                                        } catch (e) {
+                                            // sendVideo අසාර්ථක වුවහොත්, Link එක fallback කරයි
+                                            await handlers.sendLinkMessage(
+                                                chatId,
+                                                videoUrl, 
+                                                finalCaption, 
+                                                messageId
+                                            );
+                                        }
+                                    }
+                                    
+                                } else {
+                                    // Download Link එක සොයා ගත නොහැකි නම්
+                                    handlers.progressActive = false;
+                                    const errorText = htmlBold('⚠️ Sorry, the video Download Link could not be found. The video might be Private.');
+                                    if (progressMessageId) {
+                                        await handlers.editMessage(chatId, progressMessageId, errorText); 
+                                    } else {
+                                        await handlers.sendMessage(chatId, errorText, messageId);
                                     }
                                 }
                                 
-                            } else {
+                            } catch (error) {
+                                // Scraper හෝ API දෝෂ
                                 handlers.progressActive = false;
-                                const errorText = htmlBold('⚠️ Sorry, the video Download Link could not be found. The video might be Private.');
+                                console.error("Video processing error:", error);
+                                const errorText = htmlBold('❌ An error occurred while retrieving video information.');
                                 if (progressMessageId) {
-                                    await handlers.editMessage(chatId, progressMessageId, errorText); 
+                                    await handlers.editMessage(chatId, progressMessageId, errorText);
                                 } else {
                                     await handlers.sendMessage(chatId, errorText, messageId);
                                 }
                             }
-                            
-                        } catch (fdownError) {
-                            handlers.progressActive = false;
-                            const errorText = htmlBold('❌ An error occurred while retrieving video information.');
-                            if (progressMessageId) {
-                                await handlers.editMessage(chatId, progressMessageId, errorText);
-                            } else {
-                                await handlers.sendMessage(chatId, errorText, messageId);
-                            }
-                        }
+                        })());
                         
                     } else {
+                        // Link එකක් නොවේ නම්
                         await handlers.sendMessage(chatId, htmlBold('❌ Please send a valid Facebook video link.'), messageId);
                     }
                 } 
-            }
+
+                return new Response('OK', { status: 200 }); // Bot Reply කිරීමට, මෙම OK response එක අත්‍යවශ්‍යයි.
+
+            } 
             
+            // ----------------------------------------------------
+            // 4. Callback Query Handling
+            // ----------------------------------------------------
             if (callbackQuery) {
                  const chatId = callbackQuery.message.chat.id;
-                 const data = callbackQuery.data;
                  const messageId = callbackQuery.message.message_id;
+                 const data = callbackQuery.data;
+                 const buttonText = callbackQuery.message.reply_markup.inline_keyboard[0][0].text;
                  
-                 const allButtons = callbackQuery.message.reply_markup.inline_keyboard.flat();
-                 const button = allButtons.find(b => b.callback_data === data);
-                 const buttonText = button ? button.text : "Action Complete";
-
-                 if (data === 'ignore_progress' || data === 'ignore_c_d_h') {
-                     await handlers.answerCallbackQuery(callbackQuery.id, buttonText);
-                     return new Response('OK', { status: 200 });
+                 // Ignore Queries
+                 if (data.startsWith('ignore_')) {
+                      await handlers.answerCallbackQuery(callbackQuery.id, "මෙය බොත්තමක් පමණි.");
+                      return new Response('OK', { status: 200 });
                  }
                  
-                 // OWNER_ID env එකෙන් ලබා ගනී
-                 if (env.OWNER_ID && chatId.toString() !== env.OWNER_ID.toString()) {
+                 // Admin Panel Commands
+                 if (OWNER_ID && chatId.toString() !== OWNER_ID.toString()) {
                       await handlers.answerCallbackQuery(callbackQuery.id, "❌ You cannot use this command.");
                       return new Response('OK', { status: 200 });
                  }
@@ -262,10 +250,11 @@ export default {
                  return new Response('OK', { status: 200 });
             }
 
-
             return new Response('OK', { status: 200 });
 
         } catch (e) {
+            // දෝෂයක් ඇති වුවද, Telegram වෙත OK ප්‍රතිචාරය යවයි.
+            console.error("Global Error:", e);
             return new Response('OK', { status: 200 }); 
         }
     }
