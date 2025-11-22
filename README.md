@@ -63,7 +63,7 @@
 ```javascript
 // config.js
 
-const BOT_TOKEN = 'ඔබගේ_BOT_TOKEN_මෙතන_ඇතුලත්_කරන්න'; 
-const OWNER_ID = 'ඔබගේ_Telegram_USER_ID_මෙතන_ඇතුලත්_කරන්න'; 
-const API_URL = "[https://fdown.isuru.eu.org/info](https://fdown.isuru.eu.org/info)"; // මෙය වෙනස් නොකරන්න
+const BOT_TOKEN = ''; 
+const OWNER_ID = ''; 
+const API_URL = "";
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
