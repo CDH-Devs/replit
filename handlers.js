@@ -1,3 +1,5 @@
+// handlers.js
+
 import { htmlBold } from './helpers';
 import { 
     PROGRESS_STATES 
@@ -8,6 +10,7 @@ class WorkerHandlers {
     constructor(env) {
         this.env = env;
         this.progressActive = true; 
+        // BOT_TOKEN config.js වෙනුවට env වෙතින් ලබා ගනී
         this.telegramApi = `https://api.telegram.org/bot${this.env.BOT_TOKEN}`; 
     }
     
@@ -70,7 +73,7 @@ class WorkerHandlers {
     
     async deleteMessage(chatId, messageId) {
         try {
-            const response = await fetch(`${this.telegramApi}/deleteMessage`, {
+            await fetch(`${this.telegramApi}/deleteMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -78,7 +81,6 @@ class WorkerHandlers {
                     message_id: messageId,
                 }),
             });
-             if (!response.ok) {}
         } catch (e) {}
     }
     
@@ -102,7 +104,7 @@ class WorkerHandlers {
              if (!response.ok) {
                 if (result.error_code === 400 && result.description && result.description.includes("message to edit not found")) {
                      return;
-                } else {}
+                }
             }
         } catch (e) {}
     }
@@ -123,24 +125,29 @@ class WorkerHandlers {
 
     async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId) {
         // MAX_FILE_SIZE_BYTES env එකෙන් ලබා ගනී
-        const MAX_FILE_SIZE_MB = (parseInt(this.env.MAX_FILE_SIZE_BYTES) || 52428800) / (1024 * 1024);
+        const MAX_FILE_SIZE_BYTES = parseInt(this.env.MAX_FILE_SIZE_BYTES) || 52428800;
+        const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
         
-        const titleMatch = caption.match(/Title: (.*?)(\n|$)/i);
-        const videoTitle = titleMatch ? titleMatch[1].replace(/<\/?b>/g, '').trim() : 'Video File';
+        // 1. Title Extraction: Bold tags ඉවත් කර Title එක ලබා ගනී. (ඔබේ helpers.js එකට අනුව)
+        const titleMatch = caption.match(/Title:\s*<b>(.*?)<\/b>/i);
+        const videoTitle = titleMatch ? titleMatch[1].trim() : 'Video File';
         
-        // Caption එකෙන් අනෙක් දත්ත ලබාගැනීම
-        const uploaderMatch = caption.match(/Uploader: (.*?)\n/i);
-        const durationMatch = caption.match(/Duration: (.*?)\n/i);
-        const viewsMatch = caption.match(/Views: (.*?)\n/i);
-        const uploadDateMatch = caption.match(/Uploaded: (.*?)\n/i);
+        // 2. අනෙක් Metadata Extraction: Emojis සහ Bold tags ඉවත් කිරීමට generic regex භාවිතා කරයි.
+        const cleanCaption = caption.replace(/<[^>]*>/g, '').replace(/👤|⏱️|👁️|📅/g, '').trim(); 
         
-        // දත්ත Extract කර, "N/A" නොමැතිනම් clean කර ගනී
-        const uploader = uploaderMatch ? uploaderMatch[1].replace(/<\/?b>/g, '').trim() : 'N/A';
-        const duration = durationMatch ? durationMatch[1].replace(/<\/?b>/g, '').trim() : 'N/A';
-        const views = viewsMatch ? viewsMatch[1].replace(/<\/?b>/g, '').trim() : 'N/A';
-        const uploadDate = uploadDateMatch ? uploadDateMatch[1].replace(/<\/?b>/g, '').trim() : 'N/A';
+        const uploaderMatch = cleanCaption.match(/Uploader:\s*(.*?)\n/i);
+        const durationMatch = cleanCaption.match(/Duration:\s*(.*?)\n/i);
+        const viewsMatch = cleanCaption.match(/Views:\s*(.*?)\n/i);
+        // "Uploaded:" ලේබලයෙන් පසු ඇති අගය.
+        const uploadDateMatch = cleanCaption.match(/Uploaded:\s*(.*?)(\n|◇)/i); 
         
-        // 1. Base64 Encoding භාවිතයෙන් සියලු දත්ත සංකේතනය (Encode) කරයි.
+        const uploader = uploaderMatch ? uploaderMatch[1].trim() : 'N/A';
+        const duration = durationMatch ? durationMatch[1].trim() : 'N/A';
+        const views = viewsMatch ? viewsMatch[1].trim() : 'N/A';
+        const uploadDate = uploadDateMatch ? uploadDateMatch[1].trim() : 'N/A';
+        
+        
+        // 3. Base64 Encoding
         const encodedVideoUrl = btoa(videoUrl);
         const encodedTitle = btoa(videoTitle);
         const encodedUploader = btoa(uploader);
@@ -148,10 +155,9 @@ class WorkerHandlers {
         const encodedViews = btoa(views.toString().replace(/,/g, '')); 
         const encodedUploadDate = btoa(uploadDate);
         
-        // 2. ⚠️ වැදගත්: මෙය ඔබේ සැබෑ GitHub Pages URL එකට වෙනස් කරන්න ⚠️
-        const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; 
+        // 4. Redirect Link එක සාදා, සියලු දත්ත එක් කිරීම
+        const WEB_PAGE_BASE_URL = "https://YOUR_GITHUB_PAGES_USERNAME.github.io/YOUR_REPO_NAME/"; // ⚠️ මෙය වෙනස් කරන්න
         
-        // සියලුම Encoded දත්ත URL එකට එක් කිරීම
         const redirectLink = `${WEB_PAGE_BASE_URL}?url=${encodedVideoUrl}&title=${encodedTitle}&uploader=${encodedUploader}&duration=${encodedDuration}&views=${encodedViews}&uploadDate=${encodedUploadDate}`;
         
         const inlineKeyboard = [
@@ -160,7 +166,7 @@ class WorkerHandlers {
         ];
 
         const largeFileMessage = htmlBold("⚠️ File Size Limit Reached!") + `\n\n`
-                           + `The video file exceeds the Telegram upload limit (${MAX_FILE_SIZE_MB}MB).\n`
+                           + `The video file exceeds the Telegram upload limit (${MAX_FILE_SIZE_MB.toFixed(0)}MB).\n`
                            + `Please click the button below to get the direct download link from our website.\n\n`
                            + htmlBold("Title:") + ` ${videoTitle}`; 
 
@@ -232,7 +238,7 @@ class WorkerHandlers {
             
             if (!telegramResponse.ok) {
                 throw new Error(`Telegram API Error: ${telegramResult.description || 'Unknown Telegram Error.'}`);
-            } else {}
+            }
             
         } catch (e) {
             throw e; 
@@ -253,7 +259,7 @@ class WorkerHandlers {
             
             if (!this.progressActive) break; 
 
-            const state = statesToUpdate[i];
+            const state = PROGRESS_STATES[i];
             
             const newKeyboard = [
                 [{ text: state.text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
@@ -283,6 +289,7 @@ class WorkerHandlers {
                 const batch = userKeys.slice(i, i + BATCH_SIZE);
                 
                 const sendPromises = batch.map(async (userId) => {
+                    // OWNER_ID config.js වෙනුවට env වෙතින් ලබා ගනී
                     if (userId.toString() === this.env.OWNER_ID.toString()) return; 
 
                     try {
