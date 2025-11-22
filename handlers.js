@@ -1,4 +1,4 @@
-// handlers.js - නිවැරදි කරන ලද කේතය (Syntax Error Fix සහිතව)
+// handlers.js - GitHub Pages සබැඳියට යාවත්කාලීන කර ඇත
 
 import { htmlBold, formatDuration } from './helpers';
 import { 
@@ -7,9 +7,9 @@ import {
 } from './config';
 
 // Base64 Encoding Helper Function (WorkerHandlers class එකට පිටතින්)
+// Cloudflare Workers පරිසරය සඳහා ආරක්ෂිත Base64 Encoding
 function encodeBase64(text) {
     if (!text) return '';
-    // Cloudflare Workers සඳහා ආරක්ෂිත Base64 Encoding
     return btoa(unescape(encodeURIComponent(text))); 
 }
 
@@ -30,6 +30,7 @@ class WorkerHandlers {
         const isNew = await this.env.USER_DATABASE.get(key) === null; 
         if (isNew) {
             try {
+                // KV Binding "USER_DATABASE" භාවිතා කරයි
                 await this.env.USER_DATABASE.put(key, "1"); 
             } catch (e) {}
         }
@@ -135,12 +136,13 @@ class WorkerHandlers {
         } catch (e) {}
     }
 
-    // යාවත්කාලීන කරන ලද sendLinkMessage ශ්‍රිතය
+    // යාවත්කාලීන කරන ලද sendLinkMessage ශ්‍රිතය (GitHub Pages සබැඳිය සමඟ)
     async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId, apiData = {}) {
         
-        // WORKER_DOMAIN ENV විචල්‍යය භාවිතා කරන්න
-        const workerDomain = this.env.WORKER_DOMAIN || 'https://facebookdownbot.your-worker-domain.workers.dev'; 
+        // WORKER_DOMAIN ENV විචල්‍යය දැන් GitHub Pages URL එක විය යුතුය
+        const workerDomain = this.env.WORKER_DOMAIN || 'https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/'; 
         
+        // අවසානයේ / තිබුණත් නැතත් නිවැරදිව Domain එක සකස් කරයි
         const baseUrl = workerDomain.endsWith('/') ? workerDomain.slice(0, -1) : workerDomain;
         
         // --- DATA ENCODING FOR GITHUB PAGES ---
@@ -151,8 +153,8 @@ class WorkerHandlers {
         const encodedViews = encodeBase64((typeof apiData.views === 'number' ? apiData.views.toLocaleString('en-US') : apiData.views) || 'N/A');
         const encodedUploadDate = encodeBase64(apiData.uploadDate || 'N/A');
         
-        // /download endpoint එක වෙත යොමු කරන Worker URL එක සෑදීම
-        const downloadLink = `${baseUrl}/download?url=${encodedUrl}&title=${encodedTitle}&uploader=${encodedUploader}&duration=${encodedDuration}&views=${encodedViews}&date=${encodedUploadDate}`;
+        // 🚨 GitHub Pages URL එක සෘජුවම download.html ගොනුවට යොමු කරයි.
+        const downloadLink = `${baseUrl}/download.html?url=${encodedUrl}&title=${encodedTitle}&uploader=${encodedUploader}&duration=${encodedDuration}&views=${encodedViews}&date=${encodedUploadDate}&thumbnail=${encodeBase64(apiData.thumbnailLink)}`;
         
         const largeFileMessage = htmlBold("⚠️ Large file detected.") + `\n\n`
                                + `The video file size (${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB limit) is too large for direct Telegram upload. Please use the button below to download the file directly.\n\n`
@@ -179,6 +181,7 @@ class WorkerHandlers {
     async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, inlineKeyboard = null) {
         
         try {
+            // Facebook වීඩියෝ සෘජුවම fetch කිරීමට අවශ්‍ය Headers
             const videoResponse = await fetch(videoUrl, {
                 method: 'GET',
                 headers: {
@@ -247,6 +250,7 @@ class WorkerHandlers {
         this.progressActive = true;
         const originalText = htmlBold('⌛️ Detecting video... Please wait a moment.'); 
         
+        // config.js වෙතින් PROGRESS_STATES භාවිතා කරයි
         const statesToUpdate = PROGRESS_STATES.slice(1, 10); 
 
         for (let i = 0; i < statesToUpdate.length; i++) {
@@ -307,7 +311,8 @@ class WorkerHandlers {
                         } else {
                             failedSends++;
                             const result = await response.json();
-                            if (result.error_code === 403) {
+                            // User blocked the bot (Error 403)
+                            if (result.error_code === 403) { 
                                 this.env.USER_DATABASE.delete(`user:${userId}`);
                             }
                         }
