@@ -1,272 +1,187 @@
-import { WorkerHandlers } from './handlers';
-import { getApiMetadata, scrapeVideoLinkAndThumbnail } from './api';
-import { formatCaption, htmlBold } from './helpers';
-import { PROGRESS_STATES } from './config';
-
-export default {
-    
-    async fetch(request, env, ctx) {
-        if (request.method !== 'POST') {
-            return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="pageTitle">File Download - C D H Corporation</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #0088cc; /* Telegram Blue */
+            --success-color: #28a745;
         }
+        body { 
+            background-color: #f8f9fa; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .container { 
+            max-width: 800px; 
+            margin-top: 50px; 
+            margin-bottom: 50px;
+        }
+        .download-box { 
+            background: #ffffff; 
+            border-radius: 10px; 
+            padding: 40px; 
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1); 
+        }
+        .btn-download { 
+            background-color: var(--success-color); 
+            border-color: var(--success-color); 
+            font-size: 1.5rem; 
+            padding: 15px 40px; 
+            border-radius: 50px; 
+            transition: background-color 0.3s, transform 0.3s; 
+        }
+        .btn-download:hover { 
+            background-color: #1e7e34; 
+            border-color: #1e7e34;
+            transform: translateY(-2px);
+        }
+        .thumbnail-img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+        .info-label {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="download-box text-center">
         
-        const handlers = new WorkerHandlers(env);
+        <h1 class="mb-4 text-dark fw-bold">⬇️ File Download Ready</h1>
         
-        const userInlineKeyboard = [
-            [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
-        ];
+        <div id="loadingState" class="alert alert-info" role="alert">
+            Loading video details...
+        </div>
         
-        const initialProgressKeyboard = [
-             [{ text: PROGRESS_STATES[0].text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
-        ];
-
-        try {
-            const update = await request.json();
-            const message = update.message;
-            const callbackQuery = update.callback_query;
+        <div id="videoDetails" class="d-none">
             
-            if (!message && !callbackQuery) {
-                 return new Response('OK', { status: 200 });
-            }
+            <h2 id="videoTitle" class="mt-2 mb-4 text-primary"></h2>
+
+            <a id="downloadButton" href="#" class="btn btn-download text-white mt-4 mb-4" download>
+                Click to Download Video
+            </a>
             
-            ctx.waitUntil(new Promise(resolve => setTimeout(resolve, 0)));
+            <div class="row text-start mt-4 border rounded p-3 bg-light">
+                <div class="col-md-6 mb-2">
+                    <span class="info-label">👤 Uploader:</span> <span id="uploaderText">N/A</span>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <span class="info-label">⏱️ Duration:</span> <span id="durationText">N/A</span>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <span class="info-label">👁️ Views:</span> <span id="viewsText">N/A</span>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <span class="info-label">📅 Uploaded:</span> <span id="uploadDateText">N/A</span>
+                </div>
+            </div>
 
-            if (message) { 
-                const chatId = message.chat.id;
-                const messageId = message.message_id;
-                const text = message.text ? message.text.trim() : null; 
-                const isOwner = env.OWNER_ID && chatId.toString() === env.OWNER_ID.toString();
-                
-                const userName = message.from.first_name || "User"; 
+            <p class="mt-3 text-muted small">
+                If the download doesn't start, please right-click the button and select "Save Link As..."
+            </p>
+        </div>
+        
+        <div id="errorState" class="d-none alert alert-danger" role="alert">
+            ❌ Error: Invalid video link or required data is missing.
+        </div>
+    </div>
+    
+    <footer class="text-center mt-4">
+        <p class="small text-muted mb-0">Powered by C D H Corporation © | Cloudflare Worker Bot</p>
+    </footer>
+</div>
 
-                ctx.waitUntil(handlers.saveUserId(chatId));
-
-                if (isOwner && message.reply_to_message) {
-                    const repliedMessage = message.reply_to_message;
-                    
-                    if (repliedMessage.text && repliedMessage.text.includes("Please reply with the message you want to broadcast:")) {
-                        
-                        const messageToBroadcastId = messageId; 
-                        const originalChatId = chatId;
-                        const promptMessageId = repliedMessage.message_id; 
-
-                        await handlers.editMessage(chatId, promptMessageId, htmlBold("📣 Broadcast started. Please wait."));
-                        
-                        ctx.waitUntil((async () => {
-                            try {
-                                const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
-                                
-                                const resultMessage = htmlBold('Broadcast Complete ✅') + `\n\n`
-                                                    + htmlBold(`🚀 Successful: `) + results.successfulSends + '\n'
-                                                    + htmlBold(`❗️ Failed/Blocked: `) + results.failedSends;
-                                
-                                await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
-
-                            } catch (e) {
-                                await handlers.sendMessage(chatId, htmlBold("❌ Broadcast Process Failed.") + `\n\nError: ${e.message}`, messageToBroadcastId);
-                            }
-                        })()); 
-
-                        return new Response('OK', { status: 200 });
-                    }
-                }
-                
-                if (isOwner && text && text.toLowerCase().startsWith('/brod') && message.reply_to_message) {
-                    const messageToBroadcastId = message.reply_to_message.message_id; 
-                    const originalChatId = chatId;
-                    
-                    await handlers.sendMessage(chatId, htmlBold("📣 Quick Broadcast started..."), messageId);
-
-                    ctx.waitUntil((async () => {
-                        try {
-                            const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
-                            
-                            const resultMessage = htmlBold('Quick Broadcast Complete ✅') + `\n\n`
-                                                + htmlBold(`🚀 Successful: `) + results.successfulSends + '\n'
-                                                + htmlBold(`❗️ Failed/Blocked: `) + results.failedSends;
-                            
-                            await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
-
-                        } catch (e) {
-                            await handlers.sendMessage(chatId, htmlBold("❌ Quick Broadcast failed.") + `\n\nError: ${e.message}`, messageId);
-                        }
-                    })());
-
-                    return new Response('OK', { status: 200 });
-                }
-                // --- End Admin/Broadcast Logic ---
-                
-                if (text && text.toLowerCase().startsWith('/start')) {
-                    
-                    if (isOwner) {
-                        const ownerText = htmlBold("👑 Welcome Back, Admin!") + "\n\nThis is your Admin Control Panel.";
-                        const adminKeyboard = [
-                            [{ text: '📊 Users Count', callback_data: 'admin_users_count' }],
-                            [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }],
-                            [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
-                        ];
-                        await handlers.sendMessage(chatId, ownerText, messageId, adminKeyboard);
-                    } else {
-                        const userText = `👋 <b>Hello Dear ${userName}!</b> 💁‍♂️ You can easily <b>Download Facebook Videos</b> using this BOT.
-
-🎯 This BOT is <b>Active 24/7</b>.🔔 
-
-◇───────────────◇
-
-🚀 <b>Developer</b> : @chamoddeshan
-🔥 <b>C D H Corporation ©</b>
-
-◇───────────────◇`;
-                        
-                        await handlers.sendMessage(chatId, userText, messageId, userInlineKeyboard);
-                    }
-                    return new Response('OK', { status: 200 });
-                }
-
-                if (text) { 
-                    const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
-                    
-                    if (isLink) {
-                        
-                        // Action: Send 'typing'
-                        ctx.waitUntil(handlers.sendAction(chatId, 'typing'));
-
-                        const initialText = htmlBold('⌛️ Detecting video... Please wait a moment.'); 
-                        const progressMessageId = await handlers.sendMessage(
-                            chatId, 
-                            initialText, 
-                            messageId, 
-                            initialProgressKeyboard
-                        );
-                        
-                        if (progressMessageId) {
-                            ctx.waitUntil(handlers.simulateProgress(chatId, progressMessageId, messageId));
-                        }
-                        
-                        try {
-                            const apiData = await getApiMetadata(text, env.API_URL);
-                            const finalCaption = formatCaption(apiData);
-                            
-                            const scraperData = await scrapeVideoLinkAndThumbnail(text);
-                            const videoUrl = scraperData.videoUrl;
-                            
-                            const finalThumbnailLink = apiData.thumbnailLink || scraperData.fallbackThumbnail;
-
-                            
-                            if (videoUrl) {
-                                handlers.progressActive = false; 
-                                
-                                const MAX_FILE_SIZE = parseInt(env.MAX_FILE_SIZE_BYTES) || 52428800; // Default 50MB
-                                
-                                if (apiData.filesize > MAX_FILE_SIZE) { 
-                                    if (progressMessageId) {
-                                        await handlers.deleteMessage(chatId, progressMessageId);
-                                    }
-                                    
-                                    await handlers.sendLinkMessage(
-                                        chatId,
-                                        videoUrl, 
-                                        finalCaption, 
-                                        messageId
-                                    );
-                                    
-                                } else {
-                                    if (progressMessageId) {
-                                        await handlers.deleteMessage(chatId, progressMessageId);
-                                    }
-                                    
-                                    // Action: Send 'upload_video'
-                                    ctx.waitUntil(handlers.sendAction(chatId, 'upload_video'));
-                                    
-                                    try {
-                                        await handlers.sendVideo(
-                                            chatId, 
-                                            videoUrl, 
-                                            finalCaption, 
-                                            messageId, 
-                                            finalThumbnailLink, 
-                                            userInlineKeyboard
-                                        ); 
-                                    } catch (e) {
-                                        // Fallback to sending direct link if sendVideo fails (e.g., file too big/timeout)
-                                        await handlers.sendLinkMessage(
-                                            chatId,
-                                            videoUrl, 
-                                            finalCaption, 
-                                            messageId
-                                        );
-                                    }
-                                }
-                                
-                            } else {
-                                handlers.progressActive = false;
-                                const errorText = htmlBold('⚠️ Sorry, the video Download Link could not be found. The video might be Private.');
-                                if (progressMessageId) {
-                                    await handlers.editMessage(chatId, progressMessageId, errorText); 
-                                } else {
-                                    await handlers.sendMessage(chatId, errorText, messageId);
-                                }
-                            }
-                            
-                        } catch (fdownError) {
-                            handlers.progressActive = false;
-                            const errorText = htmlBold('❌ An error occurred while retrieving video information.');
-                            if (progressMessageId) {
-                                await handlers.editMessage(chatId, progressMessageId, errorText);
-                            } else {
-                                await handlers.sendMessage(chatId, errorText, messageId);
-                            }
-                        }
-                        
-                    } else {
-                        await handlers.sendMessage(chatId, htmlBold('❌ Please send a valid Facebook video link.'), messageId);
-                    }
-                } 
-            }
-            
-            if (callbackQuery) {
-                 const chatId = callbackQuery.message.chat.id;
-                 const data = callbackQuery.data;
-                 const messageId = callbackQuery.message.message_id;
-                 
-                 const allButtons = callbackQuery.message.reply_markup.inline_keyboard.flat();
-                 const button = allButtons.find(b => b.callback_data === data);
-                 const buttonText = button ? button.text : "Action Complete";
-
-                 if (data === 'ignore_progress' || data === 'ignore_c_d_h') {
-                     await handlers.answerCallbackQuery(callbackQuery.id, buttonText);
-                     return new Response('OK', { status: 200 });
-                 }
-                 
-                 // OWNER_ID env එකෙන් ලබා ගනී
-                 if (env.OWNER_ID && chatId.toString() !== env.OWNER_ID.toString()) {
-                      await handlers.answerCallbackQuery(callbackQuery.id, "❌ You cannot use this command.");
-                      return new Response('OK', { status: 200 });
-                 }
-
-                 switch (data) {
-                     case 'admin_users_count':
-                          await handlers.answerCallbackQuery(callbackQuery.id, buttonText);
-                          const usersCount = await handlers.getAllUsersCount();
-                          const countMessage = htmlBold(`📊 Current Users in the Bot: ${usersCount}`);
-                          await handlers.editMessage(chatId, messageId, countMessage);
-                          break;
-                     
-                     case 'admin_broadcast':
-                          await handlers.answerCallbackQuery(callbackQuery.id, buttonText);
-                          const broadcastPrompt = htmlBold("📣 Broadcast Message") + "\n\n" + htmlBold("Please reply with the message you want to broadcast (Text, Photo, or Video).");
-                          await handlers.sendMessage(chatId, broadcastPrompt, messageId); 
-                          break;
-                 }
-
-                 return new Response('OK', { status: 200 });
-            }
-
-
-            return new Response('OK', { status: 200 });
-
-        } catch (e) {
-            return new Response('OK', { status: 200 }); 
+<script>
+    // formatCaption function එකේ logic එක සරල කර මෙහි භාවිතා කර ඇත.
+    function formatDuration(seconds) {
+        if (typeof seconds !== 'number' || seconds < 0) return 'N/A';
+        const totalSeconds = Math.round(seconds); 
+        const h = Math.floor(totalSeconds / 3600);
+        const m = Math.floor((totalSeconds % 3600) / 60);
+        const s = totalSeconds % 60;
+        if (h > 0) {
+            return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        } else {
+            return `${m}:${String(s).padStart(2, '0')}`;
         }
     }
-};
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const params = new URLSearchParams(window.location.search);
+        
+        // Base64 Encoded දත්ත ලබාගැනීම
+        const encodedUrl = params.get('url');
+        const encodedTitle = params.get('title');
+        const encodedUploader = params.get('uploader');
+        const encodedDuration = params.get('duration');
+        const encodedViews = params.get('views');
+        const encodedUploadDate = params.get('uploadDate');
+        // encodedThumbnail අවශ්‍ය නැත, මන්ද එය කෙලින්ම URL එකට යැවිය නොහැක.
+        
+        const downloadButton = document.getElementById('downloadButton');
+        const videoTitleElement = document.getElementById('videoTitle');
+        const loadingState = document.getElementById('loadingState');
+        const videoDetails = document.getElementById('videoDetails');
+        const errorState = document.getElementById('errorState');
+        
+        const uploaderText = document.getElementById('uploaderText');
+        const durationText = document.getElementById('durationText');
+        const viewsText = document.getElementById('viewsText');
+        const uploadDateText = document.getElementById('uploadDateText');
+        const pageTitle = document.getElementById('pageTitle');
+
+        if (encodedUrl) {
+            try {
+                // Base64 Decode
+                const decodedUrl = atob(encodedUrl);
+                const decodedTitle = encodedTitle ? atob(encodedTitle) : 'Facebook Video';
+                const decodedUploader = encodedUploader ? atob(encodedUploader) : 'Unknown Uploader';
+                const decodedDuration = encodedDuration ? formatDuration(parseInt(atob(encodedDuration))) : 'N/A';
+                const decodedViews = encodedViews ? parseInt(atob(encodedViews)).toLocaleString('en-US') : 'N/A';
+                
+                let decodedUploadDate = encodedUploadDate ? atob(encodedUploadDate) : 'N/A';
+                if (decodedUploadDate && /^\d{8}$/.test(decodedUploadDate)) {
+                    decodedUploadDate = decodedUploadDate.substring(0, 4) + '-' + decodedUploadDate.substring(4, 6) + '-' + decodedUploadDate.substring(6, 8);
+                }
+
+                // UI Update
+                loadingState.classList.add('d-none');
+                videoDetails.classList.remove('d-none');
+                
+                videoTitleElement.textContent = decodedTitle;
+                pageTitle.textContent = `Download: ${decodedTitle}`;
+                
+                downloadButton.href = decodedUrl;
+                downloadButton.download = decodedTitle.replace(/[^a-z0-9]/gi, '_') + '.mp4'; // File name set
+
+                uploaderText.textContent = decodedUploader;
+                durationText.textContent = decodedDuration;
+                viewsText.textContent = decodedViews;
+                uploadDateText.textContent = decodedUploadDate;
+
+            } catch (e) {
+                loadingState.classList.add('d-none');
+                errorState.classList.remove('d-none');
+                pageTitle.textContent = "Error Loading Link";
+                console.error("Decoding error:", e);
+            }
+        } else {
+            loadingState.classList.add('d-none');
+            videoTitleElement.textContent = "Welcome to the Bot Download Page.";
+            errorState.textContent = "Please use the Telegram Bot to generate a valid download link.";
+            errorState.classList.remove('d-none');
+        }
+    });
+</script>
+
+</body>
+</html>
