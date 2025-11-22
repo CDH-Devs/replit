@@ -156,7 +156,7 @@ class WorkerHandlers {
         const encodedUploadDate = btoa(uploadDate);
         
         // 4. Redirect Link එක සාදා, සියලු දත්ත එක් කිරීම
-        const WEB_PAGE_BASE_URL = "https://YOUR_GITHUB_PAGES_USERNAME.github.io/YOUR_REPO_NAME/"; // ⚠️ මෙය වෙනස් කරන්න
+        const WEB_PAGE_BASE_URL = "https://chamodbinancelk-afk.github.io/FACEBOOK-VIDEO-DOWNLOAD-WEB/"; // ⚠️ මෙය වෙනස් කරන්න
         
         const redirectLink = `${WEB_PAGE_BASE_URL}?url=${encodedVideoUrl}&title=${encodedTitle}&uploader=${encodedUploader}&duration=${encodedDuration}&views=${encodedViews}&uploadDate=${encodedUploadDate}`;
         
