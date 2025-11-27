@@ -1,15 +1,14 @@
-const BOT_TOKEN = '8209321918:AAGiP6mGm2Wi-BILZjbn1qTuEqsilGbqzjA'; 
-const OWNER_ID = '1901997764'; 
-const API_URL = "https://fdown.isuru.eu.org/info"; 
-const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; //
+const BOT_TOKEN = process.env.BOT_TOKEN || ''; 
+const OWNER_ID = process.env.OWNER_ID || ''; 
+const MAX_FILE_SIZE_BYTES = parseInt(process.env.MAX_FILE_SIZE_BYTES) || 50 * 1024 * 1024;
 
 const telegramApi = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 const PROGRESS_STATES = [
     { text: "⏳ <b>Loading</b>...▒▒▒▒▒▒▒▒▒▒", percentage: "0%" },
-    { text: "📥 <b>Downloading</b>...█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
-    { text: "📥 <b>Downloading</b>...██▒▒▒▒▒▒▒▒", percentage: "20%" },
-    { text: "📥 <b>Downloading</b>...███▒▒▒▒▒▒▒", percentage: "30%" },
+    { text: "📥 <b>Fetching</b>...█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
+    { text: "📥 <b>Fetching</b>...██▒▒▒▒▒▒▒▒", percentage: "20%" },
+    { text: "📥 <b>Fetching</b>...███▒▒▒▒▒▒▒", percentage: "30%" },
     { text: "📤 <b>Uploading</b>...████▒▒▒▒▒▒", percentage: "40%" },
     { text: "📤 <b>Uploading</b>...█████▒▒▒▒▒", percentage: "50%" },
     { text: "📤 <b>Uploading</b>...██████▒▒▒▒", percentage: "60%" },
@@ -22,7 +21,6 @@ const PROGRESS_STATES = [
 export { 
     BOT_TOKEN, 
     OWNER_ID, 
-    API_URL, 
     MAX_FILE_SIZE_BYTES, 
     telegramApi, 
     PROGRESS_STATES 
