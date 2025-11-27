@@ -5,7 +5,7 @@ function htmlBold(text) {
 function formatDuration(seconds) {
     if (typeof seconds !== 'number' || seconds < 0) return 'N/A';
     
-    const totalSeconds = Math.round(seconds); 
+    const totalSeconds = Math.round(seconds);
 
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -18,35 +18,56 @@ function formatDuration(seconds) {
     }
 }
 
-function formatCaption(data) {
-    const { videoTitle, uploader, duration, views, uploadDate } = data;
+function formatNumber(num) {
+    if (typeof num !== 'number') return '0';
+    if (num >= 1000000) {
+        return (num / 1000000).toFixed(1) + 'M';
+    } else if (num >= 1000) {
+        return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toString();
+}
+
+function formatTikTokCaption(data) {
+    const { title, author, authorUsername, duration, music, musicAuthor } = data;
     
     const formattedDuration = formatDuration(duration);
-    const formattedViews = typeof views === 'number' ? views.toLocaleString('en-US') : views;
     
-    let formattedDate = uploadDate;
-    if (uploadDate && /^\d{8}$/.test(uploadDate)) {
-        formattedDate = uploadDate.substring(0, 4) + '-' + uploadDate.substring(4, 6) + '-' + uploadDate.substring(6, 8);
+    let caption = '';
+    
+    if (title && title !== 'TikTok Video') {
+        const shortTitle = title.length > 100 ? title.substring(0, 100) + '...' : title;
+        caption += `${htmlBold('Description:')} ${shortTitle}\n\n`;
     }
     
-    // ඔබ ඉල්ලූ පරිදි labels bold කර ඇත.
-    let caption = `${htmlBold('Title:')} ${videoTitle}`;
+    caption += `👤 ${htmlBold('Author:')} ${author}`;
+    if (authorUsername) {
+        caption += ` (@${authorUsername})`;
+    }
+    caption += '\n';
     
-    caption += `\n\n`;
-    caption += `👤 ${htmlBold('Uploader:')} ${uploader}\n`;
-    caption += `⏱️ ${htmlBold('Duration:')} ${formattedDuration}\n`;
-    caption += `👁️ ${htmlBold('Views:')} ${formattedViews}\n`;
-    caption += `📅 ${htmlBold('Uploaded:')} ${formattedDate}`; 
+    if (duration > 0) {
+        caption += `⏱️ ${htmlBold('Duration:')} ${formattedDuration}\n`;
+    }
     
-    caption += `\n\n◇───────────────◇\n`
-    caption += `🚀 Developer: @chamoddeshan\n`
-    caption += `🔥 C D H Corporation ©`;
+    if (music) {
+        caption += `\n🎵 ${htmlBold('Music:')} ${music}`;
+        if (musicAuthor) {
+            caption += ` - ${musicAuthor}`;
+        }
+        caption += '\n';
+    }
+    
+    caption += `\n◇───────────────◇\n`;
+    caption += `🚀 LK NEWS Download Bot\n`;
+    caption += `🔥 TikTok Video Downloader`;
 
     return caption;
 }
 
 export { 
     htmlBold, 
-    formatDuration, 
-    formatCaption 
+    formatDuration,
+    formatNumber,
+    formatTikTokCaption 
 };
