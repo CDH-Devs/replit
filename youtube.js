@@ -1,8 +1,10 @@
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
-import { existsSync, unlinkSync, readdirSync } from 'fs';
+import { existsSync, unlinkSync, readdirSync, writeFileSync, createWriteStream } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import ytdl from '@distube/ytdl-core';
+import { pipeline } from 'stream/promises';
 
 const execAsync = promisify(exec);
 
@@ -11,7 +13,7 @@ async function searchYouTube(query, limit = 50) {
     
     try {
         const { stdout } = await execAsync(
-            `yt-dlp --flat-playlist --print "%(id)s|%(title)s|%(duration)s" "ytsearch${limit}:${query}"`,
+            `yt-dlp --flat-playlist --print "%(id)s|%(title)s|%(duration)s" --extractor-args "youtube:player_client=tv_embedded" "ytsearch${limit}:${query}"`,
             { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
         );
         
@@ -41,7 +43,7 @@ async function getVideoMetadata(videoUrl) {
     
     try {
         const { stdout } = await execAsync(
-            `yt-dlp --print "%(title)s|||%(duration)s|||%(view_count)s|||%(like_count)s|||%(upload_date)s|||%(channel)s|||%(description)s|||%(thumbnail)s" --no-playlist "${videoUrl}"`,
+            `yt-dlp --print "%(title)s|||%(duration)s|||%(view_count)s|||%(like_count)s|||%(upload_date)s|||%(channel)s|||%(description)s|||%(thumbnail)s" --no-playlist --extractor-args "youtube:player_client=tv_embedded" "${videoUrl}"`,
             { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
         );
         
@@ -85,47 +87,32 @@ async function getVideoMetadata(videoUrl) {
 }
 
 async function downloadAudio(videoUrl, outputPath) {
-    console.log(`[YouTube] Downloading audio from: ${videoUrl}`);
+    console.log(`[YouTube] Downloading audio from: ${videoUrl} using ytdl-core`);
     
-    return new Promise((resolve, reject) => {
-        const args = [
-            '-x',
-            '--audio-format', 'mp3',
-            '--audio-quality', '128K',
-            '-o', outputPath,
-            '--no-playlist',
-            '--no-warnings',
-            '--quiet',
-            '--max-filesize', '50M',
-            videoUrl
-        ];
-        
-        const process = spawn('yt-dlp', args);
-        let stderr = '';
-        
-        process.stderr.on('data', (data) => {
-            stderr += data.toString();
-        });
-        
-        process.on('close', (code) => {
-            if (code === 0 && existsSync(outputPath)) {
-                console.log(`[YouTube] Download complete: ${outputPath}`);
-                resolve(outputPath);
-            } else {
-                console.log(`[YouTube] Download failed: ${stderr}`);
-                reject(new Error(stderr || 'Download failed'));
+    try {
+        const audioStream = ytdl(videoUrl, {
+            filter: 'audioonly',
+            quality: 'highestaudio',
+            requestOptions: {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
             }
         });
         
-        process.on('error', (err) => {
-            reject(err);
-        });
+        const writeStream = createWriteStream(outputPath);
+        await pipeline(audioStream, writeStream);
         
-        setTimeout(() => {
-            process.kill();
-            reject(new Error('Download timeout'));
-        }, 120000);
-    });
+        if (existsSync(outputPath)) {
+            console.log(`[YouTube] Download complete: ${outputPath}`);
+            return outputPath;
+        } else {
+            throw new Error('File was not created');
+        }
+    } catch (error) {
+        console.log(`[YouTube] ytdl-core download failed: ${error.message}`);
+        throw error;
+    }
 }
 
 function isYouTubeUrl(text) {
