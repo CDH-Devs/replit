@@ -359,18 +359,21 @@ class WorkerHandlers {
                 form.append('reply_markup', JSON.stringify({ inline_keyboard: keyboard }));
             }
 
-            const response = await fetch(`${this.telegramApi}/sendAudio`, {
-                method: 'POST',
-                body: form,
-                headers: form.getHeaders()
+            const response = await new Promise((resolve, reject) => {
+                form.submit(`${this.telegramApi}/sendAudio`, (err, res) => {
+                    if (err) return reject(err);
+                    let data = '';
+                    res.on('data', chunk => data += chunk);
+                    res.on('end', () => resolve(data));
+                    res.on('error', reject);
+                });
             });
 
-            const text = await response.text();
             let result;
             try {
-                result = JSON.parse(text);
+                result = JSON.parse(response);
             } catch (e) {
-                console.log(`[Handlers] sendAudioFile parse error: ${text.substring(0, 200)}`);
+                console.log(`[Handlers] sendAudioFile parse error: ${response.substring(0, 200)}`);
                 throw new Error('Invalid response from Telegram');
             }
             
