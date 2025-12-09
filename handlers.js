@@ -148,6 +148,18 @@ class WorkerHandlers {
         return this.telegramRequest('sendMediaGroup', body);
     }
 
+    async sendPhotoWithCaption(chatId, photoUrl, caption, replyToMessageId = null, keyboard = null) {
+        const body = {
+            chat_id: chatId,
+            photo: photoUrl,
+            caption: caption,
+            parse_mode: 'HTML'
+        };
+        if (replyToMessageId) body.reply_to_message_id = replyToMessageId;
+        if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
+        return this.telegramRequest('sendPhoto', body);
+    }
+
     async sendAudio(chatId, audioUrl, caption, replyToMessageId = null, keyboard = null) {
         const body = {
             chat_id: chatId,
