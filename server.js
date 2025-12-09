@@ -4,6 +4,7 @@ import { downloadTikTokVideo } from './api.js';
 import { formatTikTokCaption, htmlBold } from './helpers.js';
 import { PROGRESS_STATES, BOT_TOKEN, OWNER_ID } from './config.js';
 import { downloadAndSendSongs } from './youtube.js';
+import { isAlreadyDownloaded, addToHistory, getDownloadedCount } from './songHistory.js';
 
 const app = express();
 app.use(express.json());
@@ -160,14 +161,16 @@ app.post('/', async (req, res) => {
 
 🎬 Welcome to <b>LK NEWS Download Bot</b>!
 
-📌 <b>Features:</b>
+📌 <b>Available Commands:</b>
 
-<b>🎥 TikTok Downloads:</b>
-Send any TikTok link to download videos without watermark.
+<b>🎥 /tiktok [url]</b>
+Download TikTok videos without watermark
+Example: <code>/tiktok https://vm.tiktok.com/xxx</code>
 
-<b>🎵 YouTube Music:</b>
-Use <code>/song [name]</code> to download songs!
+<b>🎵 /song [name or url]</b>
+Download songs from YouTube
 Example: <code>/song new sinhala dj song</code>
+Example: <code>/song https://youtube.com/watch?v=xxx</code>
 
 ◇───────────────◇
 
@@ -188,11 +191,11 @@ Example: <code>/song new sinhala dj song</code>
                     await handlers.sendMessage(
                         chatId, 
                         htmlBold('🎵 YouTube Song Downloader') + '\n\n' +
-                        'Usage: <code>/song [search query]</code>\n\n' +
+                        'Usage: <code>/song [name or url]</code>\n\n' +
                         'Examples:\n' +
                         '• <code>/song new sinhala dj song</code>\n' +
                         '• <code>/song alan walker faded</code>\n' +
-                        '• <code>/song 2024 remix songs</code>\n\n' +
+                        '• <code>/song https://youtube.com/watch?v=xxx</code>\n\n' +
                         'I will download up to 50 songs matching your search!',
                         messageId
                     );
@@ -209,7 +212,7 @@ Example: <code>/song new sinhala dj song</code>
                 
                 ctx.waitUntil((async () => {
                     try {
-                        await downloadAndSendSongs(query, 50, handlers, chatId, statusMessageId);
+                        await downloadAndSendSongs(query, 50, handlers, chatId, statusMessageId, { isAlreadyDownloaded, addToHistory });
                     } catch (error) {
                         console.log(`[Bot] Song download error: ${error.message}`);
                         await handlers.editMessage(
@@ -223,138 +226,155 @@ Example: <code>/song new sinhala dj song</code>
                 return res.status(200).send('OK');
             }
 
-            if (text) { 
-                const isAudioRequest = text.toLowerCase().startsWith('audio ') || text.toLowerCase().endsWith(' /audio');
-                const cleanUrl = text.replace(/^audio\s+/i, '').replace(/\s+\/audio$/i, '').trim();
-                const isTikTokLink = /^https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)/i.test(isAudioRequest ? cleanUrl : text);
+            if (text && text.toLowerCase().startsWith('/tiktok')) {
+                const tiktokUrl = text.replace(/^\/tiktok\s*/i, '').trim();
                 
-                if (isTikTokLink) {
-                    const urlToUse = isAudioRequest ? cleanUrl : text;
-                    
-                    ctx.waitUntil(handlers.sendAction(chatId, 'typing'));
-
-                    const initialText = htmlBold('⏳ Fetching TikTok video... Please wait.'); 
-                    const progressMessageId = await handlers.sendMessage(
-                        chatId, 
-                        initialText, 
-                        messageId, 
-                        initialProgressKeyboard
+                if (!tiktokUrl) {
+                    await handlers.sendMessage(
+                        chatId,
+                        htmlBold('🎥 TikTok Video Downloader') + '\n\n' +
+                        'Usage: <code>/tiktok [url]</code>\n\n' +
+                        'Example:\n' +
+                        '• <code>/tiktok https://vm.tiktok.com/xxx</code>\n' +
+                        '• <code>/tiktok https://www.tiktok.com/@user/video/123</code>',
+                        messageId
                     );
+                    return res.status(200).send('OK');
+                }
+                
+                const isTikTokLink = /^https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)/i.test(tiktokUrl);
+                
+                if (!isTikTokLink) {
+                    await handlers.sendMessage(chatId, htmlBold('❌ Please provide a valid TikTok URL.'), messageId);
+                    return res.status(200).send('OK');
+                }
+                
+                ctx.waitUntil(handlers.sendAction(chatId, 'typing'));
+
+                const initialText = htmlBold('⏳ Fetching TikTok video... Please wait.'); 
+                const progressMessageId = await handlers.sendMessage(
+                    chatId, 
+                    initialText, 
+                    messageId, 
+                    initialProgressKeyboard
+                );
+                
+                if (progressMessageId) {
+                    ctx.waitUntil(handlers.simulateProgress(chatId, progressMessageId, messageId));
+                }
+                
+                try {
+                    const videoData = await downloadTikTokVideo(tiktokUrl);
                     
-                    if (progressMessageId) {
-                        ctx.waitUntil(handlers.simulateProgress(chatId, progressMessageId, messageId));
-                    }
-                    
-                    try {
-                        const videoData = await downloadTikTokVideo(urlToUse);
-                        
-                        if (!videoData.success) {
-                            handlers.progressActive = false;
-                            const errorText = htmlBold('❌ Failed to fetch video.') + `\n\n${videoData.error || 'The video might be private or unavailable.'}`;
-                            if (progressMessageId) {
-                                await handlers.editMessage(chatId, progressMessageId, errorText);
-                            } else {
-                                await handlers.sendMessage(chatId, errorText, messageId);
-                            }
-                            return res.status(200).send('OK');
-                        }
-                        
-                        if (videoData.type === 'image' && videoData.images && videoData.images.length > 0) {
-                            handlers.progressActive = false;
-                            if (progressMessageId) {
-                                await handlers.deleteMessage(chatId, progressMessageId);
-                            }
-                            
-                            const caption = formatTikTokCaption(videoData);
-                            await handlers.sendPhotos(chatId, videoData.images, caption, messageId, userInlineKeyboard);
-                            return res.status(200).send('OK');
-                        }
-                        
-                        const finalCaption = formatTikTokCaption(videoData);
-                        const videoUrl = videoData.videoUrl;
-                        
-                        if (isAudioRequest && videoUrl) {
-                            handlers.progressActive = false;
-                            if (progressMessageId) {
-                                await handlers.deleteMessage(chatId, progressMessageId);
-                            }
-                            ctx.waitUntil(handlers.sendAction(chatId, 'upload_audio'));
-                            try {
-                                const audioKeyboard = [[{ text: 'LK NEWS Download Bot', callback_data: 'ignore_branding' }]];
-                                await handlers.extractAudioFromVideo(videoUrl, finalCaption, chatId, messageId, audioKeyboard);
-                            } catch (e) {
-                                console.log(`[Bot] Audio extraction failed: ${e.message}`);
-                                await handlers.sendMessage(chatId, htmlBold('❌ Failed to extract audio: ') + e.message, messageId);
-                            }
-                        } else if (videoUrl) {
-                            handlers.progressActive = false; 
-                            
-                            if (progressMessageId) {
-                                await handlers.deleteMessage(chatId, progressMessageId);
-                            }
-                            
-                            ctx.waitUntil(handlers.sendAction(chatId, 'upload_video'));
-                            
-                            try {
-                                const videoKeyboard = getVideoKeyboard(videoUrl, finalCaption);
-                                const buttonId = videoKeyboard[0][0].callback_data;
-                                await handlers.cacheVideoForAudio(chatId, buttonId, videoUrl, finalCaption);
-                                
-                                if (videoData.videoHD && videoData.videoSD) {
-                                    await handlers.sendVideoWithQualityFallback(
-                                        chatId,
-                                        videoData.videoHD,
-                                        videoData.videoSD,
-                                        finalCaption,
-                                        messageId,
-                                        videoData.thumbnail,
-                                        videoKeyboard
-                                    );
-                                } else {
-                                    await handlers.sendVideo(
-                                        chatId, 
-                                        videoUrl, 
-                                        finalCaption, 
-                                        messageId, 
-                                        videoData.thumbnail, 
-                                        videoKeyboard
-                                    );
-                                }
-                            } catch (e) {
-                                console.log(`[Bot] sendVideo failed: ${e.message}`);
-                                console.log(`[Bot] Sending direct download link instead...`);
-                                await handlers.sendLinkMessage(
-                                    chatId,
-                                    videoUrl, 
-                                    finalCaption, 
-                                    messageId
-                                );
-                            }
-                            
-                        } else {
-                            handlers.progressActive = false;
-                            const errorText = htmlBold('⚠️ Could not get the video download link.') + '\n\nThe video might be private or the format is not supported.';
-                            if (progressMessageId) {
-                                await handlers.editMessage(chatId, progressMessageId, errorText); 
-                            } else {
-                                await handlers.sendMessage(chatId, errorText, messageId);
-                            }
-                        }
-                    } catch (error) {
+                    if (!videoData.success) {
                         handlers.progressActive = false;
-                        console.log(`[Bot] Error: ${error.message}`);
-                        const errorText = htmlBold('❌ An error occurred while processing the video.');
+                        const errorText = htmlBold('❌ Failed to fetch video.') + `\n\n${videoData.error || 'The video might be private or unavailable.'}`;
                         if (progressMessageId) {
                             await handlers.editMessage(chatId, progressMessageId, errorText);
                         } else {
                             await handlers.sendMessage(chatId, errorText, messageId);
                         }
+                        return res.status(200).send('OK');
                     }
                     
-                } else {
-                    await handlers.sendMessage(chatId, htmlBold('❌ Please send a valid TikTok video link.') + '\n\nExample: https://www.tiktok.com/@user/video/123456789', messageId);
+                    if (videoData.type === 'image' && videoData.images && videoData.images.length > 0) {
+                        handlers.progressActive = false;
+                        if (progressMessageId) {
+                            await handlers.deleteMessage(chatId, progressMessageId);
+                        }
+                        
+                        const caption = formatTikTokCaption(videoData);
+                        await handlers.sendPhotos(chatId, videoData.images, caption, messageId, userInlineKeyboard);
+                        return res.status(200).send('OK');
+                    }
+                    
+                    const finalCaption = formatTikTokCaption(videoData);
+                    const videoUrl = videoData.videoUrl;
+                    
+                    if (videoUrl) {
+                        handlers.progressActive = false; 
+                        
+                        if (progressMessageId) {
+                            await handlers.deleteMessage(chatId, progressMessageId);
+                        }
+                        
+                        ctx.waitUntil(handlers.sendAction(chatId, 'upload_video'));
+                        
+                        try {
+                            const videoKeyboard = getVideoKeyboard(videoUrl, finalCaption);
+                            const buttonId = videoKeyboard[0][0].callback_data;
+                            await handlers.cacheVideoForAudio(chatId, buttonId, videoUrl, finalCaption);
+                            
+                            if (videoData.videoHD && videoData.videoSD) {
+                                await handlers.sendVideoWithQualityFallback(
+                                    chatId,
+                                    videoData.videoHD,
+                                    videoData.videoSD,
+                                    finalCaption,
+                                    messageId,
+                                    videoData.thumbnail,
+                                    videoKeyboard
+                                );
+                            } else {
+                                await handlers.sendVideo(
+                                    chatId, 
+                                    videoUrl, 
+                                    finalCaption, 
+                                    messageId, 
+                                    videoData.thumbnail, 
+                                    videoKeyboard
+                                );
+                            }
+                        } catch (e) {
+                            console.log(`[Bot] sendVideo failed: ${e.message}`);
+                            console.log(`[Bot] Sending direct download link instead...`);
+                            await handlers.sendLinkMessage(
+                                chatId,
+                                videoUrl, 
+                                finalCaption, 
+                                messageId
+                            );
+                        }
+                        
+                    } else {
+                        handlers.progressActive = false;
+                        const errorText = htmlBold('⚠️ Could not get the video download link.') + '\n\nThe video might be private or the format is not supported.';
+                        if (progressMessageId) {
+                            await handlers.editMessage(chatId, progressMessageId, errorText); 
+                        } else {
+                            await handlers.sendMessage(chatId, errorText, messageId);
+                        }
+                    }
+                } catch (error) {
+                    handlers.progressActive = false;
+                    console.log(`[Bot] Error: ${error.message}`);
+                    const errorText = htmlBold('❌ An error occurred while processing the video.');
+                    if (progressMessageId) {
+                        await handlers.editMessage(chatId, progressMessageId, errorText);
+                    } else {
+                        await handlers.sendMessage(chatId, errorText, messageId);
+                    }
                 }
-            } 
+                
+                return res.status(200).send('OK');
+            }
+
+            if (text) {
+                const helpText = `📌 <b>Available Commands:</b>
+
+<b>🎥 /tiktok [url]</b>
+Download TikTok videos without watermark
+Example: <code>/tiktok https://vm.tiktok.com/xxx</code>
+
+<b>🎵 /song [name or url]</b>
+Download songs from YouTube
+Example: <code>/song new sinhala dj song</code>
+
+◇───────────────◇
+Send <b>/start</b> for more info!`;
+                await handlers.sendMessage(chatId, helpText, messageId, userInlineKeyboard);
+                return res.status(200).send('OK');
+            }
         }
         
         if (callbackQuery) {
