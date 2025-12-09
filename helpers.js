@@ -1,73 +1,65 @@
-function htmlBold(text) {
-    return `<b>${text}</b>`;
-}
+import re
 
-function formatDuration(seconds) {
-    if (typeof seconds !== 'number' || seconds < 0) return 'N/A';
-    
-    const totalSeconds = Math.round(seconds);
+def html_bold(text):
+    return f"<b>{text}</b>"
 
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    const s = totalSeconds % 60;
+def format_duration(seconds):
+    if not isinstance(seconds, (int, float)) or seconds < 0:
+        return 'N/A'
     
-    if (h > 0) {
-        return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    } else {
-        return `${m}:${String(s).padStart(2, '0')}`;
-    }
-}
+    total_seconds = round(seconds)
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    
+    if h > 0:
+        return f"{h}:{str(m).zfill(2)}:{str(s).zfill(2)}"
+    else:
+        return f"{m}:{str(s).zfill(2)}"
 
-function formatNumber(num) {
-    if (typeof num !== 'number') return '0';
-    if (num >= 1000000) {
-        return (num / 1000000).toFixed(1) + 'M';
-    } else if (num >= 1000) {
-        return (num / 1000).toFixed(1) + 'K';
-    }
-    return num.toString();
-}
+def format_number(num):
+    if not isinstance(num, (int, float)):
+        return '0'
+    if num >= 1000000:
+        return f"{num / 1000000:.1f}M"
+    elif num >= 1000:
+        return f"{num / 1000:.1f}K"
+    return str(int(num))
 
-function formatTikTokCaption(data) {
-    const { title, author, authorUsername, duration, music, musicAuthor } = data;
+def format_tiktok_caption(data):
+    title = data.get('title', '')
+    author = data.get('author', 'Unknown')
+    author_username = data.get('author_username', '')
+    duration = data.get('duration', 0)
+    music = data.get('music')
+    music_author = data.get('music_author')
     
-    const formattedDuration = formatDuration(duration);
+    formatted_duration = format_duration(duration)
+    caption = ''
     
-    let caption = '';
+    if title and title != 'TikTok Video':
+        short_title = title[:100] + '...' if len(title) > 100 else title
+        caption += f"{html_bold('Description:')} {short_title}\n\n"
     
-    if (title && title !== 'TikTok Video') {
-        const shortTitle = title.length > 100 ? title.substring(0, 100) + '...' : title;
-        caption += `${htmlBold('Description:')} ${shortTitle}\n\n`;
-    }
+    caption += f"👤 {html_bold('Author:')} {author}"
+    if author_username:
+        caption += f" (@{author_username})"
+    caption += '\n'
     
-    caption += `👤 ${htmlBold('Author:')} ${author}`;
-    if (authorUsername) {
-        caption += ` (@${authorUsername})`;
-    }
-    caption += '\n';
+    if duration > 0:
+        caption += f"⏱️ {html_bold('Duration:')} {formatted_duration}\n"
     
-    if (duration > 0) {
-        caption += `⏱️ ${htmlBold('Duration:')} ${formattedDuration}\n`;
-    }
+    if music:
+        caption += f"\n🎵 {html_bold('Music:')} {music}"
+        if music_author:
+            caption += f" - {music_author}"
+        caption += '\n'
     
-    if (music) {
-        caption += `\n🎵 ${htmlBold('Music:')} ${music}`;
-        if (musicAuthor) {
-            caption += ` - ${musicAuthor}`;
-        }
-        caption += '\n';
-    }
+    caption += "\n◇───────────────◇\n"
+    caption += "🚀 LK NEWS Download Bot\n"
+    caption += "🔥 TikTok Video Downloader"
     
-    caption += `\n◇───────────────◇\n`;
-    caption += `🚀 LK NEWS Download Bot\n`;
-    caption += `🔥 TikTok Video Downloader`;
+    return caption
 
-    return caption;
-}
-
-export { 
-    htmlBold, 
-    formatDuration,
-    formatNumber,
-    formatTikTokCaption 
-};
+def strip_html_tags(text):
+    return re.sub(r'<[^>]*>', '', text)
