@@ -15,7 +15,10 @@
     "wrangler": "^4.50.0"
   },
   "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
     "@tobyg74/tiktok-api-dl": "^1.3.7",
-    "fluent-ffmpeg": "^2.1.3"
+    "express": "^5.2.1",
+    "fluent-ffmpeg": "^2.1.3",
+    "y2mate-dl": "^1.0.4"
   }
 }
