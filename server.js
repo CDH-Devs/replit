@@ -14,6 +14,8 @@ const userInlineKeyboard = [
 ];
 
 const userDatabase = new Map();
+const songQueryCache = new Map();
+let ownerMode = 'owner';
 
 const env = {
     BOT_TOKEN: BOT_TOKEN,
@@ -53,11 +55,16 @@ app.get('/', (req, res) => {
 app.post('/', async (req, res) => {
     const handlers = new WorkerHandlers(env);
     
-    const getVideoKeyboard = (videoUrl, videoCaption) => [
-        [
-            { text: '🎵 Extract Audio', callback_data: `extract_audio_${Date.now()}` }
-        ]
-    ];
+    const getVideoKeyboard = (videoUrl, videoCaption, isOwnerUser = false) => {
+        if (ownerMode === 'owner' && isOwnerUser) {
+            return [
+                [
+                    { text: '🎵 Extract Audio', callback_data: `extract_audio_${Date.now()}` }
+                ]
+            ];
+        }
+        return [[{ text: 'LK NEWS Download Bot', callback_data: 'ignore_branding' }]];
+    };
     
     const initialProgressKeyboard = [
         [{ text: PROGRESS_STATES[0].text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
@@ -149,8 +156,13 @@ app.post('/', async (req, res) => {
             if (text && text.toLowerCase().startsWith('/start')) {
                 
                 if (isOwner) {
-                    const ownerText = htmlBold("👑 Welcome Back, Admin!") + "\n\nThis is your Admin Control Panel.";
+                    const modeText = ownerMode === 'owner' ? '👑 Owner Mode' : '👤 User Mode';
+                    const ownerText = htmlBold("👑 Welcome Back, Admin!") + "\n\nThis is your Admin Control Panel.\n\n" + htmlBold(`Current Mode: ${modeText}`);
                     const adminKeyboard = [
+                        [
+                            { text: ownerMode === 'owner' ? '✅ Owner Mode' : '👑 Owner Mode', callback_data: 'set_mode_owner' },
+                            { text: ownerMode === 'user' ? '✅ User Mode' : '👤 User Mode', callback_data: 'set_mode_user' }
+                        ],
                         [{ text: '📊 Users Count', callback_data: 'admin_users_count' }],
                         [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }],
                         [{ text: 'LK NEWS Download Bot', callback_data: 'ignore_branding' }] 
@@ -195,33 +207,34 @@ Example: <code>/song https://youtube.com/watch?v=xxx</code>
                         'Examples:\n' +
                         '• <code>/song new sinhala dj song</code>\n' +
                         '• <code>/song alan walker faded</code>\n' +
-                        '• <code>/song https://youtube.com/watch?v=xxx</code>\n\n' +
-                        'I will download up to 50 songs matching your search!',
+                        '• <code>/song https://youtube.com/watch?v=xxx</code>',
                         messageId
                     );
                     return res.status(200).send('OK');
                 }
                 
-                const statusMessageId = await handlers.sendMessage(
-                    chatId,
-                    htmlBold('🎵 Starting YouTube search...') + '\n\n' +
-                    `🔍 Query: <i>${query}</i>\n` +
-                    '📥 Searching for songs...',
-                    messageId
-                );
+                const queryId = `song_${chatId}_${Date.now()}`;
+                songQueryCache.set(queryId, { query, chatId, timestamp: Date.now() });
                 
-                ctx.waitUntil((async () => {
-                    try {
-                        await downloadAndSendSongs(query, 50, handlers, chatId, statusMessageId, { isAlreadyDownloaded, addToHistory });
-                    } catch (error) {
-                        console.log(`[Bot] Song download error: ${error.message}`);
-                        await handlers.editMessage(
-                            chatId, 
-                            statusMessageId, 
-                            htmlBold('❌ Error downloading songs') + '\n\n' + error.message
-                        );
-                    }
-                })());
+                const songCountKeyboard = [
+                    [
+                        { text: '1 Song', callback_data: `songcount_1_${queryId}` },
+                        { text: '5 Songs', callback_data: `songcount_5_${queryId}` }
+                    ],
+                    [
+                        { text: '15 Songs', callback_data: `songcount_15_${queryId}` },
+                        { text: '50 Songs', callback_data: `songcount_50_${queryId}` }
+                    ]
+                ];
+                
+                await handlers.sendMessage(
+                    chatId,
+                    htmlBold('🎵 YouTube Song Downloader') + '\n\n' +
+                    `🔍 Query: <i>${query}</i>\n\n` +
+                    htmlBold('How many songs do you want to download?'),
+                    messageId,
+                    songCountKeyboard
+                );
                 
                 return res.status(200).send('OK');
             }
@@ -301,9 +314,11 @@ Example: <code>/song https://youtube.com/watch?v=xxx</code>
                         ctx.waitUntil(handlers.sendAction(chatId, 'upload_video'));
                         
                         try {
-                            const videoKeyboard = getVideoKeyboard(videoUrl, finalCaption);
+                            const videoKeyboard = getVideoKeyboard(videoUrl, finalCaption, isOwner);
                             const buttonId = videoKeyboard[0][0].callback_data;
-                            await handlers.cacheVideoForAudio(chatId, buttonId, videoUrl, finalCaption);
+                            if (buttonId.startsWith('extract_audio_')) {
+                                await handlers.cacheVideoForAudio(chatId, buttonId, videoUrl, finalCaption);
+                            }
                             
                             if (videoData.videoHD && videoData.videoSD) {
                                 await handlers.sendVideoWithQualityFallback(
@@ -410,12 +425,83 @@ Send <b>/start</b> for more info!`;
                 return res.status(200).send('OK');
             }
             
+            if (data.startsWith('songcount_')) {
+                const parts = data.split('_');
+                const count = parseInt(parts[1]);
+                const queryId = parts.slice(2).join('_');
+                
+                const cachedData = songQueryCache.get(queryId);
+                
+                if (!cachedData) {
+                    await handlers.answerCallbackQuery(callbackQuery.id, '❌ Request expired');
+                    await handlers.editMessage(chatId, messageId, htmlBold('❌ Request expired. Please send the /song command again.'));
+                    return res.status(200).send('OK');
+                }
+                
+                await handlers.answerCallbackQuery(callbackQuery.id, `🎵 Downloading ${count} song(s)...`);
+                
+                songQueryCache.delete(queryId);
+                
+                await handlers.editMessage(
+                    chatId,
+                    messageId,
+                    htmlBold('🎵 Starting YouTube search...') + '\n\n' +
+                    `🔍 Query: <i>${cachedData.query}</i>\n` +
+                    `📥 Downloading ${count} song(s)...`
+                );
+                
+                ctx.waitUntil((async () => {
+                    try {
+                        await downloadAndSendSongs(cachedData.query, count, handlers, chatId, messageId, { isAlreadyDownloaded, addToHistory });
+                    } catch (error) {
+                        console.log(`[Bot] Song download error: ${error.message}`);
+                        await handlers.editMessage(
+                            chatId, 
+                            messageId, 
+                            htmlBold('❌ Error downloading songs') + '\n\n' + error.message
+                        );
+                    }
+                })());
+                
+                return res.status(200).send('OK');
+            }
+            
             if (env.OWNER_ID && chatId.toString() !== env.OWNER_ID.toString()) {
                 await handlers.answerCallbackQuery(callbackQuery.id, "❌ You cannot use this command.");
                 return res.status(200).send('OK');
             }
 
             switch (data) {
+                case 'set_mode_owner':
+                    ownerMode = 'owner';
+                    await handlers.answerCallbackQuery(callbackQuery.id, '✅ Owner Mode activated');
+                    const ownerModeKeyboard = [
+                        [
+                            { text: '✅ Owner Mode', callback_data: 'set_mode_owner' },
+                            { text: '👤 User Mode', callback_data: 'set_mode_user' }
+                        ],
+                        [{ text: '📊 Users Count', callback_data: 'admin_users_count' }],
+                        [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }],
+                        [{ text: 'LK NEWS Download Bot', callback_data: 'ignore_branding' }] 
+                    ];
+                    await handlers.editMessage(chatId, messageId, htmlBold("👑 Welcome Back, Admin!") + "\n\nThis is your Admin Control Panel.\n\n" + htmlBold("Current Mode: 👑 Owner Mode"), ownerModeKeyboard);
+                    break;
+                
+                case 'set_mode_user':
+                    ownerMode = 'user';
+                    await handlers.answerCallbackQuery(callbackQuery.id, '✅ User Mode activated');
+                    const userModeKeyboard = [
+                        [
+                            { text: '👑 Owner Mode', callback_data: 'set_mode_owner' },
+                            { text: '✅ User Mode', callback_data: 'set_mode_user' }
+                        ],
+                        [{ text: '📊 Users Count', callback_data: 'admin_users_count' }],
+                        [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }],
+                        [{ text: 'LK NEWS Download Bot', callback_data: 'ignore_branding' }] 
+                    ];
+                    await handlers.editMessage(chatId, messageId, htmlBold("👑 Welcome Back, Admin!") + "\n\nThis is your Admin Control Panel.\n\n" + htmlBold("Current Mode: 👤 User Mode"), userModeKeyboard);
+                    break;
+                
                 case 'admin_users_count':
                     await handlers.answerCallbackQuery(callbackQuery.id, buttonText);
                     const usersCount = await handlers.getAllUsersCount();
