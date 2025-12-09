@@ -36,6 +36,54 @@ async function searchYouTube(query, limit = 50) {
     }
 }
 
+async function getVideoMetadata(videoUrl) {
+    console.log(`[YouTube] Fetching metadata for: ${videoUrl}`);
+    
+    try {
+        const { stdout } = await execAsync(
+            `yt-dlp --print "%(title)s|||%(duration)s|||%(view_count)s|||%(like_count)s|||%(upload_date)s|||%(channel)s|||%(description)s|||%(thumbnail)s" --no-playlist "${videoUrl}"`,
+            { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+        );
+        
+        const parts = stdout.trim().split('|||');
+        const [title, duration, views, likes, uploadDate, channel, description, thumbnail] = parts;
+        
+        const durationSec = parseInt(duration) || 0;
+        const minutes = Math.floor(durationSec / 60);
+        const seconds = durationSec % 60;
+        const durationFormatted = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        
+        let dateFormatted = 'Unknown';
+        if (uploadDate && uploadDate.length === 8) {
+            const year = uploadDate.substring(0, 4);
+            const month = uploadDate.substring(4, 6);
+            const day = uploadDate.substring(6, 8);
+            dateFormatted = `${year}-${month}-${day}`;
+        }
+        
+        const formatNumber = (num) => {
+            const n = parseInt(num) || 0;
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+            return n.toString();
+        };
+        
+        return {
+            title: title || 'Unknown',
+            duration: durationFormatted,
+            views: formatNumber(views),
+            likes: formatNumber(likes),
+            uploadDate: dateFormatted,
+            channel: channel || 'Unknown',
+            description: (description || '').substring(0, 200),
+            thumbnail: thumbnail || null
+        };
+    } catch (error) {
+        console.log(`[YouTube] Metadata error: ${error.message}`);
+        return null;
+    }
+}
+
 async function downloadAudio(videoUrl, outputPath) {
     console.log(`[YouTube] Downloading audio from: ${videoUrl}`);
     
@@ -135,21 +183,35 @@ async function downloadAndSendSongs(query, limit, handlers, chatId, statusMessag
             return { success: 0, failed: 0, skipped: 1 };
         }
         
-        await handlers.editMessage(chatId, statusMessageId, `<b>🎵 Downloading from URL...</b>\n\n🔄 Processing...`);
+        await handlers.editMessage(chatId, statusMessageId, `<b>🎵 Fetching song info...</b>\n\n🔄 Processing...`);
+        
+        const metadata = await getVideoMetadata(query);
+        
+        if (metadata && metadata.thumbnail) {
+            const infoCaption = `🎵 <b>${metadata.title}</b>\n\n` +
+                `⏱ <b>Duration:</b> ${metadata.duration}\n` +
+                `👁 <b>Views:</b> ${metadata.views}\n` +
+                `👍 <b>Likes:</b> ${metadata.likes}\n` +
+                `📅 <b>Upload Date:</b> ${metadata.uploadDate}\n` +
+                `📺 <b>Channel:</b> ${metadata.channel}\n\n` +
+                `📝 <b>Description:</b>\n${metadata.description}${metadata.description.length >= 200 ? '...' : ''}`;
+            
+            await handlers.sendPhotoWithCaption(chatId, metadata.thumbnail, infoCaption, null);
+        }
+        
+        await handlers.editMessage(chatId, statusMessageId, `<b>🎵 Downloading audio...</b>\n\n🔄 Please wait...`);
+        await handlers.sendAction(chatId, 'upload_audio');
         
         const tempDir = tmpdir();
         const outputPath = join(tempDir, `song_url_${Date.now()}.mp3`);
         
         try {
-            const { stdout } = await execAsync(
-                `yt-dlp --print "%(title)s" "${query}"`,
-                { timeout: 30000 }
-            );
-            const title = stdout.trim() || 'Unknown Song';
+            const title = metadata ? metadata.title : 'Unknown Song';
             
             await downloadAudio(query, outputPath);
             
             if (existsSync(outputPath)) {
+                await handlers.sendAction(chatId, 'upload_audio');
                 await handlers.sendAudioFile(chatId, outputPath, title, null);
                 
                 if (historyFunctions) {
@@ -268,4 +330,4 @@ async function downloadAndSendSongs(query, limit, handlers, chatId, statusMessag
     return { success: successCount, failed: failedCount, skipped: skippedCount };
 }
 
-export { searchYouTube, downloadAudio, downloadAndSendSongs };
+export { searchYouTube, downloadAudio, downloadAndSendSongs, getVideoMetadata };
