@@ -42,3 +42,4 @@ run = ["node", "server.js"]
 
 [userenv.shared]
 BOT_TOKEN = "8488657540:AAEdxSgMh58TqMNQeh1zW2K2OEoQFl8Fwig"
+OWNER_ID = "1901997764"
