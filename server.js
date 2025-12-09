@@ -155,7 +155,7 @@ app.post('/', async (req, res) => {
             
             if (text && text.toLowerCase().startsWith('/start')) {
                 
-                if (isOwner) {
+                if (isOwner && ownerMode === 'owner') {
                     const modeText = ownerMode === 'owner' ? '👑 Owner Mode' : '👤 User Mode';
                     const ownerText = htmlBold("👑 Welcome Back, Admin!") + "\n\nThis is your Admin Control Panel.\n\n" + htmlBold(`Current Mode: ${modeText}`);
                     const adminKeyboard = [
@@ -168,6 +168,34 @@ app.post('/', async (req, res) => {
                         [{ text: 'LK NEWS Download Bot', callback_data: 'ignore_branding' }] 
                     ];
                     await handlers.sendMessage(chatId, ownerText, messageId, adminKeyboard);
+                } else if (isOwner && ownerMode === 'user') {
+                    const userText = `👋 <b>Hello ${userName}!</b>
+
+🎬 Welcome to <b>LK NEWS Download Bot</b>!
+
+📌 <b>Available Commands:</b>
+
+<b>🎥 /tiktok [url]</b>
+Download TikTok videos without watermark
+Example: <code>/tiktok https://vm.tiktok.com/xxx</code>
+
+<b>🎵 /song [name or url]</b>
+Download songs from YouTube
+Example: <code>/song new sinhala dj song</code>
+Example: <code>/song https://youtube.com/watch?v=xxx</code>
+
+◇───────────────◇
+
+🚀 <b>TikTok + YouTube Downloader</b>
+🔥 <b>Powered by Replit</b>
+
+◇───────────────◇`;
+                    
+                    const userModeKeyboard = [
+                        ...userInlineKeyboard,
+                        [{ text: '🔙 Back to Admin', callback_data: 'set_mode_owner' }]
+                    ];
+                    await handlers.sendMessage(chatId, userText, messageId, userModeKeyboard);
                 } else {
                     const userText = `👋 <b>Hello ${userName}!</b>
 
