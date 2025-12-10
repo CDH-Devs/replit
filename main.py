@@ -11,6 +11,7 @@ from tiktok_api import download_tiktok_video
 from helpers import format_tiktok_caption, html_bold, strip_html_tags
 from youtube import download_and_send_songs, search_youtube, download_audio, get_video_metadata, is_youtube_url, extract_video_id
 from song_history import is_already_downloaded, add_to_history
+from facebook import is_facebook_profile_url, get_facebook_photos, download_photo_to_temp
 
 app = Flask(__name__)
 
@@ -22,6 +23,90 @@ user_inline_keyboard = [
 
 song_query_cache = {}
 owner_mode = 'owner'
+
+def process_facebook_profile(url, handlers, chat_id, message_id, is_owner):
+    """Download Facebook profile and cover photos - Owner only"""
+    if not is_owner:
+        handlers.send_message(chat_id, html_bold('❌ This feature is only available for the owner.'), message_id)
+        return
+    
+    try:
+        handlers.send_action(chat_id, 'typing')
+        status_msg_id = handlers.send_message(
+            chat_id,
+            html_bold('📥 Fetching Facebook profile photos...') + '\n\n⏳ Please wait...',
+            message_id
+        )
+        
+        result = get_facebook_photos(url)
+        
+        if not result.get('success'):
+            handlers.edit_message(
+                chat_id, status_msg_id,
+                html_bold('❌ Failed to fetch photos') + f"\n\n{result.get('error', 'Unknown error')}"
+            )
+            return
+        
+        photos = result.get('photos', {})
+        username = photos.get('username', 'Unknown')
+        photos_sent = 0
+        
+        if photos.get('profile_photo'):
+            handlers.edit_message(chat_id, status_msg_id, html_bold('📤 Sending profile photo...'))
+            handlers.send_action(chat_id, 'upload_photo')
+            
+            temp_file = download_photo_to_temp(photos['profile_photo'], 'fb_profile')
+            if temp_file and os.path.exists(temp_file):
+                caption = f"👤 <b>Profile Photo</b>\n\n📛 Username: <code>{username}</code>"
+                handlers.send_photo_file(chat_id, temp_file, caption, message_id)
+                try:
+                    os.unlink(temp_file)
+                except:
+                    pass
+                photos_sent += 1
+            else:
+                handlers.send_photo_with_caption(
+                    chat_id, photos['profile_photo'],
+                    f"👤 <b>Profile Photo</b>\n\n📛 Username: <code>{username}</code>",
+                    message_id
+                )
+                photos_sent += 1
+        
+        if photos.get('cover_photo'):
+            handlers.edit_message(chat_id, status_msg_id, html_bold('📤 Sending cover photo...'))
+            handlers.send_action(chat_id, 'upload_photo')
+            
+            temp_file = download_photo_to_temp(photos['cover_photo'], 'fb_cover')
+            if temp_file and os.path.exists(temp_file):
+                caption = f"🖼 <b>Cover Photo</b>\n\n📛 Username: <code>{username}</code>"
+                handlers.send_photo_file(chat_id, temp_file, caption, message_id)
+                try:
+                    os.unlink(temp_file)
+                except:
+                    pass
+                photos_sent += 1
+            else:
+                handlers.send_photo_with_caption(
+                    chat_id, photos['cover_photo'],
+                    f"🖼 <b>Cover Photo</b>\n\n📛 Username: <code>{username}</code>",
+                    message_id
+                )
+                photos_sent += 1
+        
+        if photos_sent > 0:
+            handlers.edit_message(
+                chat_id, status_msg_id,
+                html_bold('✅ Download Complete!') + f"\n\n📛 Profile: <code>{username}</code>\n📷 Photos sent: {photos_sent}"
+            )
+        else:
+            handlers.edit_message(
+                chat_id, status_msg_id,
+                html_bold('⚠️ No photos found') + '\n\nThe profile may be private or no photos are available.'
+            )
+            
+    except Exception as e:
+        print(f"[Facebook] Error: {e}")
+        handlers.send_message(chat_id, html_bold('❌ Error processing Facebook profile: ') + str(e), message_id)
 
 def get_video_keyboard(video_url, video_caption, is_owner_user=False):
     global owner_mode
@@ -427,6 +512,11 @@ Example: <code>/song https://youtube.com/watch?v=xxx</code>
                             handlers.send_message(chat_id, error_text, message_id)
                 
                 threading.Thread(target=process_tiktok).start()
+                return jsonify({"ok": True})
+            
+            # Facebook profile photo download - OWNER ONLY
+            if text and is_owner and is_facebook_profile_url(text):
+                threading.Thread(target=process_facebook_profile, args=(text, handlers, chat_id, message_id, is_owner)).start()
                 return jsonify({"ok": True})
             
             if text:
