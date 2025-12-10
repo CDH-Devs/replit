@@ -1,4 +1,4 @@
-modules = ["nodejs-20"]
+modules = ["python-3.11"]
 [agent]
 expertMode = true
 
@@ -22,17 +22,21 @@ args = "Telegram Bot Server"
 name = "Telegram Bot Server"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm start"
-waitForPort = 5000
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
+waitForPort = 5000
 
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 38989
+externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
