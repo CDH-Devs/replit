@@ -3,6 +3,7 @@ import tempfile
 import os
 import json
 import re
+from locoloader_scraper import scrape_locoloader
 
 SUPPORTED_PLATFORMS = [
     'youtube', 'instagram', 'twitter', 'tiktok', 'facebook', 
@@ -162,24 +163,30 @@ def get_youtube_quality_options(url):
         return {'success': False, 'error': str(e)}
 
 def download_media(url, format_type='video', quality='best'):
-    """Download media using yt-dlp"""
+    """Download media using yt-dlp with fallback to scraper"""
     try:
         temp_dir = tempfile.gettempdir()
         timestamp = int(__import__('time').time() * 1000)
         
+        common_opts = [
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '--referer', url,
+            '--no-check-certificates',
+            '--geo-bypass',
+            '--no-playlist',
+            '--socket-timeout', '30',
+            '--retries', '5',
+        ]
+        
         if format_type == 'audio':
             output_template = os.path.join(temp_dir, f"download_{timestamp}")
-            output_path = f"{output_template}.mp3"
             cmd = [
                 'yt-dlp', '-x', '--audio-format', 'mp3',
                 '--audio-quality', '0',
                 '-o', f"{output_template}.%(ext)s",
-                '--no-playlist',
-                url
-            ]
+            ] + common_opts + [url]
         else:
             output_template = os.path.join(temp_dir, f"download_{timestamp}")
-            output_path = f"{output_template}.mp4"
             
             if quality == '720':
                 format_str = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
@@ -194,11 +201,9 @@ def download_media(url, format_type='video', quality='best'):
                 'yt-dlp', '-f', format_str,
                 '--merge-output-format', 'mp4',
                 '-o', f"{output_template}.%(ext)s",
-                '--no-playlist',
-                url
-            ]
+            ] + common_opts + [url]
         
-        print(f"[Downloader] Running: {' '.join(cmd)}")
+        print(f"[Downloader] Running yt-dlp for: {url}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
         import glob
@@ -216,11 +221,17 @@ def download_media(url, format_type='video', quality='best'):
         if possible_files:
             return {'success': True, 'path': possible_files[0], 'type': format_type}
         
-        return {'success': False, 'error': result.stderr or 'Download failed - no output file found'}
+        print(f"[Downloader] yt-dlp failed, trying scraper fallback...")
+        scraper_result = scrape_locoloader(url, format_type)
+        if scraper_result.get('success'):
+            return scraper_result
+        
+        return {'success': False, 'error': result.stderr or 'Download failed'}
         
     except subprocess.TimeoutExpired:
         return {'success': False, 'error': 'Download timed out'}
     except Exception as e:
+        print(f"[Downloader] Error: {e}")
         return {'success': False, 'error': str(e)}
 
 def format_duration(seconds):
