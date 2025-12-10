@@ -18,56 +18,75 @@ class MTProtoClient:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
+                    cls._instance._do_init()
         return cls._instance
     
-    def __init__(self):
-        if self._initialized:
-            return
-        
+    def _do_init(self):
         self.client = None
         self.loop = None
         self.thread = None
-        self._initialized = True
         self._started = False
+        self._loop_ready = threading.Event()
+        self._start_lock = threading.Lock()
+        self._client_ready = threading.Event()
+    
+    def __init__(self):
+        pass
     
     def _run_loop(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+        self._loop_ready.set()
         self.loop.run_forever()
     
+    def _ensure_loop(self):
+        if self.loop is None or not self.loop.is_running():
+            if self.thread is None or not self.thread.is_alive():
+                self._loop_ready.clear()
+                self.thread = threading.Thread(target=self._run_loop, daemon=True)
+                self.thread.start()
+                if not self._loop_ready.wait(timeout=10):
+                    raise Exception("Event loop failed to start")
+        return self.loop
+    
     def start(self):
-        if self._started:
-            return True
-        
-        if not API_ID or not API_HASH or not BOT_TOKEN:
-            print("[MTProto] Missing API credentials (TELEGRAM_API_ID, TELEGRAM_API_HASH, BOT_TOKEN)")
-            return False
-        
-        try:
-            self.thread = threading.Thread(target=self._run_loop, daemon=True)
-            self.thread.start()
+        with self._start_lock:
+            if self._started:
+                return True
             
-            time.sleep(0.5)
+            if not API_ID or not API_HASH or not BOT_TOKEN:
+                print("[MTProto] Missing API credentials (TELEGRAM_API_ID, TELEGRAM_API_HASH, BOT_TOKEN)")
+                return False
             
-            self.client = Client(
-                "bot_session",
-                api_id=int(API_ID),
-                api_hash=API_HASH,
-                bot_token=BOT_TOKEN,
-                workdir="."
-            )
-            
-            future = asyncio.run_coroutine_threadsafe(self.client.start(), self.loop)
-            future.result(timeout=30)
-            
-            self._started = True
-            print("[MTProto] Client started successfully")
-            return True
-            
-        except Exception as e:
-            print(f"[MTProto] Failed to start client: {e}")
-            return False
+            try:
+                loop = self._ensure_loop()
+                
+                if self.client is None:
+                    self.client = Client(
+                        "bot_session",
+                        api_id=int(API_ID),
+                        api_hash=API_HASH,
+                        bot_token=BOT_TOKEN,
+                        workdir="."
+                    )
+                
+                async def _start_client():
+                    if not self.client.is_connected:
+                        await self.client.start()
+                    return True
+                
+                future = asyncio.run_coroutine_threadsafe(_start_client(), loop)
+                future.result(timeout=60)
+                self._started = True
+                print("[MTProto] Client started successfully")
+                return True
+                
+            except Exception as e:
+                print(f"[MTProto] Failed to start client: {e}")
+                import traceback
+                traceback.print_exc()
+                self._started = False
+                return False
     
     def stop(self):
         if self.client and self._started:
@@ -83,9 +102,8 @@ class MTProtoClient:
         self._started = False
     
     def send_video(self, chat_id, file_path, caption=None, reply_to_message_id=None, progress_callback=None):
-        if not self._started:
-            if not self.start():
-                return {'ok': False, 'error': 'MTProto client not available'}
+        if not self.start():
+            return {'ok': False, 'error': 'MTProto client not available'}
         
         async def _send():
             try:
@@ -107,13 +125,16 @@ class MTProtoClient:
                 print(f"[MTProto] Send video error: {e}")
                 return {'ok': False, 'error': str(e)}
         
-        future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
-        return future.result(timeout=600)
+        try:
+            future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
+            return future.result(timeout=600)
+        except Exception as e:
+            print(f"[MTProto] Future error: {e}")
+            return {'ok': False, 'error': str(e)}
     
     def send_document(self, chat_id, file_path, caption=None, reply_to_message_id=None, progress_callback=None):
-        if not self._started:
-            if not self.start():
-                return {'ok': False, 'error': 'MTProto client not available'}
+        if not self.start():
+            return {'ok': False, 'error': 'MTProto client not available'}
         
         async def _send():
             try:
@@ -134,13 +155,16 @@ class MTProtoClient:
                 print(f"[MTProto] Send document error: {e}")
                 return {'ok': False, 'error': str(e)}
         
-        future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
-        return future.result(timeout=600)
+        try:
+            future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
+            return future.result(timeout=600)
+        except Exception as e:
+            print(f"[MTProto] Future error: {e}")
+            return {'ok': False, 'error': str(e)}
     
     def send_audio(self, chat_id, file_path, title=None, caption=None, reply_to_message_id=None):
-        if not self._started:
-            if not self.start():
-                return {'ok': False, 'error': 'MTProto client not available'}
+        if not self.start():
+            return {'ok': False, 'error': 'MTProto client not available'}
         
         async def _send():
             try:
@@ -161,10 +185,22 @@ class MTProtoClient:
                 print(f"[MTProto] Send audio error: {e}")
                 return {'ok': False, 'error': str(e)}
         
-        future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
-        return future.result(timeout=600)
+        try:
+            future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
+            return future.result(timeout=600)
+        except Exception as e:
+            print(f"[MTProto] Future error: {e}")
+            return {'ok': False, 'error': str(e)}
     
     def is_available(self):
         return bool(API_ID and API_HASH and BOT_TOKEN)
 
 mtproto_client = MTProtoClient()
+
+def init_mtproto():
+    """Initialize MTProto client at startup"""
+    if mtproto_client.is_available():
+        print("[MTProto] Initializing client at startup...")
+        mtproto_client.start()
+
+init_mtproto()
