@@ -10,8 +10,12 @@ from handlers import TelegramHandlers
 from tiktok_api import download_tiktok_video
 from helpers import format_tiktok_caption, html_bold, strip_html_tags
 from youtube import download_and_send_songs, search_youtube, download_audio, get_video_metadata, is_youtube_url, extract_video_id
-from song_history import is_already_downloaded, add_to_history
+from songHistory import is_already_downloaded, add_to_history
 from facebook import is_facebook_profile_url, get_facebook_photos, download_photo_to_temp
+from universal_downloader import (
+    detect_platform, get_media_info, get_youtube_quality_options,
+    download_media, format_duration, format_views, is_supported_url
+)
 
 app = Flask(__name__)
 
@@ -22,6 +26,8 @@ user_inline_keyboard = [
 ]
 
 song_query_cache = {}
+download_cache = {}
+youtube_quality_cache = {}
 owner_mode = 'owner'
 
 def process_facebook_profile(url, handlers, chat_id, message_id, is_owner):
@@ -196,6 +202,96 @@ def download_and_send_single_song(query, handlers, chat_id, message_id, is_owner
     except Exception as e:
         print(f"[Bot] Single song download error: {e}")
         handlers.edit_message(chat_id, message_id, html_bold('❌ Error downloading song: ') + str(e))
+
+def process_universal_download(url, handlers, chat_id, message_id, is_owner, selected_format='video', quality='best'):
+    """Process download from various platforms using universal downloader"""
+    try:
+        handlers.send_action(chat_id, 'typing')
+        
+        platform = detect_platform(url)
+        platform_name = platform.capitalize() if platform != 'unknown' else 'Media'
+        
+        handlers.edit_message(chat_id, message_id, html_bold(f'📥 Downloading {platform_name} {selected_format}...'))
+        
+        result = download_media(url, selected_format, quality)
+        
+        if not result.get('success'):
+            handlers.edit_message(chat_id, message_id, html_bold('❌ Download failed: ') + result.get('error', 'Unknown error'))
+            return
+        
+        file_path = result.get('path')
+        if not file_path or not os.path.exists(file_path):
+            handlers.edit_message(chat_id, message_id, html_bold('❌ Downloaded file not found'))
+            return
+        
+        handlers.edit_message(chat_id, message_id, html_bold(f'📤 Uploading {selected_format}...'))
+        
+        if result.get('type') == 'audio':
+            handlers.send_action(chat_id, 'upload_audio')
+            handlers.send_audio_file(chat_id, file_path, f"{platform_name} Audio", None)
+        else:
+            handlers.send_action(chat_id, 'upload_video')
+            handlers.send_video_file(chat_id, file_path, f"📥 Downloaded from {platform_name}", None)
+        
+        try:
+            os.unlink(file_path)
+        except:
+            pass
+        
+        handlers.edit_message(chat_id, message_id, html_bold('✅ Download Complete!'))
+        
+    except Exception as e:
+        print(f"[Universal Download] Error: {e}")
+        handlers.edit_message(chat_id, message_id, html_bold('❌ Error: ') + str(e))
+
+def process_youtube_user_mode(url, handlers, chat_id, message_id):
+    """Show YouTube video thumbnail with quality selection for users"""
+    try:
+        handlers.send_action(chat_id, 'typing')
+        
+        info = get_youtube_quality_options(url)
+        
+        if not info.get('success'):
+            handlers.edit_message(chat_id, message_id, html_bold('❌ Failed to fetch video info: ') + info.get('error', 'Unknown error'))
+            return
+        
+        cache_id = f"ytq_{chat_id}_{int(time.time() * 1000)}"
+        youtube_quality_cache[cache_id] = {
+            'url': url,
+            'title': info.get('title'),
+            'chat_id': chat_id,
+            'timestamp': time.time()
+        }
+        
+        caption = (
+            f"🎬 <b>{info.get('title', 'Unknown')}</b>\n\n"
+            f"⏱ <b>Duration:</b> {format_duration(info.get('duration'))}\n"
+            f"📺 <b>Channel:</b> {info.get('uploader', 'Unknown')}\n\n"
+            f"<b>Select download quality:</b>"
+        )
+        
+        keyboard = [
+            [
+                {"text": "🎬 Best Video", "callback_data": f"ytdl_video_best_{cache_id}"},
+                {"text": "🎬 720p Video", "callback_data": f"ytdl_video_720_{cache_id}"}
+            ],
+            [
+                {"text": "🎵 Audio (MP3)", "callback_data": f"ytdl_audio_best_{cache_id}"}
+            ]
+        ]
+        
+        if info.get('thumbnail'):
+            result = handlers.send_photo_with_caption(chat_id, info['thumbnail'], caption, None, keyboard)
+            if result and result.get('ok'):
+                handlers.delete_message(chat_id, message_id)
+            else:
+                handlers.edit_message(chat_id, message_id, caption, keyboard)
+        else:
+            handlers.edit_message(chat_id, message_id, caption, keyboard)
+        
+    except Exception as e:
+        print(f"[YouTube User Mode] Error: {e}")
+        handlers.edit_message(chat_id, message_id, html_bold('❌ Error: ') + str(e))
 
 def extract_tiktok_audio(video_url, chat_id, caption, handlers):
     """Extract audio from TikTok video URL using yt-dlp"""
@@ -519,6 +615,116 @@ Example: <code>/song https://youtube.com/watch?v=xxx</code>
                 threading.Thread(target=process_facebook_profile, args=(text, handlers, chat_id, message_id, is_owner)).start()
                 return jsonify({"ok": True})
             
+            # /dl command - Owner mode multi-platform downloader
+            if text and text.lower().startswith('/dl'):
+                if not is_owner or owner_mode != 'owner':
+                    handlers.send_message(chat_id, html_bold('❌ This command is only available for the owner in Owner Mode.'), message_id)
+                    return jsonify({"ok": True})
+                
+                dl_url = re.sub(r'^/dl\s*', '', text, flags=re.IGNORECASE).strip()
+                
+                if not dl_url:
+                    handlers.send_message(
+                        chat_id,
+                        html_bold('📥 Universal Downloader') + '\n\n' +
+                        'Usage: <code>/dl [url]</code>\n\n' +
+                        '<b>Supported platforms:</b>\n' +
+                        '• YouTube, Instagram, Twitter/X\n' +
+                        '• TikTok, Facebook, Vimeo\n' +
+                        '• Reddit, Twitch, SoundCloud\n' +
+                        '• And many more...\n\n' +
+                        'Example:\n' +
+                        '• <code>/dl https://youtube.com/watch?v=xxx</code>\n' +
+                        '• <code>/dl https://instagram.com/p/xxx</code>',
+                        message_id
+                    )
+                    return jsonify({"ok": True})
+                
+                if not is_supported_url(dl_url):
+                    handlers.send_message(chat_id, html_bold('❌ Unsupported URL or platform.'), message_id)
+                    return jsonify({"ok": True})
+                
+                status_msg_id = handlers.send_message(
+                    chat_id,
+                    html_bold('📥 Fetching media info...') + '\n\n⏳ Please wait...',
+                    message_id
+                )
+                
+                def do_owner_download():
+                    try:
+                        info = get_media_info(dl_url)
+                        
+                        if not info.get('success'):
+                            handlers.edit_message(chat_id, status_msg_id, html_bold('❌ Failed to fetch info: ') + info.get('error', 'Unknown error'))
+                            return
+                        
+                        cache_id = f"dl_{chat_id}_{int(time.time() * 1000)}"
+                        download_cache[cache_id] = {
+                            'url': dl_url,
+                            'info': info,
+                            'chat_id': chat_id,
+                            'timestamp': time.time()
+                        }
+                        
+                        platform = info.get('platform', 'unknown').capitalize()
+                        caption = (
+                            f"📥 <b>{platform} Downloader</b>\n\n"
+                            f"🎬 <b>{info.get('title', 'Unknown')}</b>\n"
+                            f"⏱ <b>Duration:</b> {format_duration(info.get('duration'))}\n"
+                            f"👁 <b>Views:</b> {format_views(info.get('view_count'))}\n"
+                            f"📺 <b>Uploader:</b> {info.get('uploader', 'Unknown')}\n\n"
+                            f"<b>Select quality:</b>"
+                        )
+                        
+                        keyboard = []
+                        
+                        video_formats = info.get('video_formats', {})
+                        if video_formats:
+                            video_row = []
+                            for quality, fmt in list(video_formats.items())[:3]:
+                                video_row.append({"text": f"🎬 {quality}", "callback_data": f"owndl_video_{quality}_{cache_id}"})
+                            if video_row:
+                                keyboard.append(video_row)
+                        
+                        audio_formats = info.get('audio_formats', {})
+                        if audio_formats:
+                            audio_row = []
+                            for quality, fmt in list(audio_formats.items())[:2]:
+                                audio_row.append({"text": f"🎵 {quality}", "callback_data": f"owndl_audio_{quality}_{cache_id}"})
+                            if audio_row:
+                                keyboard.append(audio_row)
+                        
+                        if not keyboard:
+                            keyboard.append([{"text": "🎬 Best Video", "callback_data": f"owndl_video_best_{cache_id}"}])
+                            keyboard.append([{"text": "🎵 Audio", "callback_data": f"owndl_audio_best_{cache_id}"}])
+                        
+                        if info.get('thumbnail'):
+                            handlers.delete_message(chat_id, status_msg_id)
+                            handlers.send_photo_with_caption(chat_id, info['thumbnail'], caption, message_id, keyboard)
+                        else:
+                            handlers.edit_message(chat_id, status_msg_id, caption, keyboard)
+                        
+                    except Exception as e:
+                        print(f"[Owner Download] Error: {e}")
+                        handlers.edit_message(chat_id, status_msg_id, html_bold('❌ Error: ') + str(e))
+                
+                threading.Thread(target=do_owner_download).start()
+                return jsonify({"ok": True})
+            
+            # User mode: Detect YouTube links and show quality options
+            if text and is_youtube_url(text) and (not is_owner or owner_mode == 'user'):
+                status_msg_id = handlers.send_message(
+                    chat_id,
+                    html_bold('🎬 Fetching YouTube video info...') + '\n\n⏳ Please wait...',
+                    message_id
+                )
+                
+                def do_youtube_user():
+                    process_youtube_user_mode(text, handlers, chat_id, status_msg_id)
+                
+                threading.Thread(target=do_youtube_user).start()
+                return jsonify({"ok": True})
+            
             if text:
                 help_text = """📌 <b>Available Commands:</b>
 
@@ -529,6 +735,9 @@ Example: <code>/tiktok https://vm.tiktok.com/xxx</code>
 <b>🎵 /song [name or url]</b>
 Download songs from YouTube
 Example: <code>/song new sinhala dj song</code>
+
+<b>🔗 YouTube Links</b>
+Just send a YouTube link to download video or audio
 
 ◇───────────────◇
 Send <b>/start</b> for more info!"""
@@ -607,6 +816,77 @@ Send <b>/start</b> for more info!"""
                         handlers.edit_message(chat_id, callback_message_id, html_bold('❌ Error downloading songs') + '\n\n' + str(e))
                 
                 threading.Thread(target=do_song_download).start()
+                return jsonify({"ok": True})
+            
+            # YouTube quality selection - User mode
+            if data.startswith('ytdl_'):
+                parts = data.split('_')
+                format_type = parts[1]
+                quality = parts[2]
+                cache_id = '_'.join(parts[3:])
+                
+                cached_data = youtube_quality_cache.get(cache_id)
+                
+                if not cached_data:
+                    handlers.answer_callback_query(callback_query['id'], '❌ Request expired')
+                    handlers.delete_message(chat_id, callback_message_id)
+                    handlers.send_message(chat_id, html_bold('❌ Request expired. Please send the link again.'), None)
+                    return jsonify({"ok": True})
+                
+                handlers.answer_callback_query(callback_query['id'], f'📥 Starting download...')
+                
+                handlers.delete_message(chat_id, callback_message_id)
+                
+                status_msg_id = handlers.send_message(
+                    chat_id,
+                    html_bold(f'📥 Downloading {format_type}...') + f'\n\n🎬 {cached_data.get("title", "Video")}',
+                    None
+                )
+                
+                del youtube_quality_cache[cache_id]
+                
+                def do_ytdl_download():
+                    process_universal_download(cached_data['url'], handlers, chat_id, status_msg_id, False, format_type, quality)
+                
+                threading.Thread(target=do_ytdl_download).start()
+                return jsonify({"ok": True})
+            
+            # Owner mode multi-platform download
+            if data.startswith('owndl_'):
+                if not is_owner:
+                    handlers.answer_callback_query(callback_query['id'], '❌ Owner only')
+                    return jsonify({"ok": True})
+                
+                parts = data.split('_')
+                format_type = parts[1]
+                quality = parts[2]
+                cache_id = '_'.join(parts[3:])
+                
+                cached_data = download_cache.get(cache_id)
+                
+                if not cached_data:
+                    handlers.answer_callback_query(callback_query['id'], '❌ Request expired')
+                    handlers.delete_message(chat_id, callback_message_id)
+                    handlers.send_message(chat_id, html_bold('❌ Request expired. Please send the /dl command again.'), None)
+                    return jsonify({"ok": True})
+                
+                handlers.answer_callback_query(callback_query['id'], f'📥 Starting download...')
+                
+                handlers.delete_message(chat_id, callback_message_id)
+                
+                info = cached_data.get('info', {})
+                status_msg_id = handlers.send_message(
+                    chat_id,
+                    html_bold(f'📥 Downloading {format_type} ({quality})...') + f'\n\n🎬 {info.get("title", "Media")}',
+                    None
+                )
+                
+                del download_cache[cache_id]
+                
+                def do_owndl_download():
+                    process_universal_download(cached_data['url'], handlers, chat_id, status_msg_id, True, format_type, quality)
+                
+                threading.Thread(target=do_owndl_download).start()
                 return jsonify({"ok": True})
             
             # Admin callbacks - only for owner
