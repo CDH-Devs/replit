@@ -4,7 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["yt-dlp"]
+packages = ["openssl", "postgresql", "yt-dlp"]
 
 [workflows]
 runButton = "Project"
@@ -27,20 +27,16 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
+args = "python -m gunicorn --bind 0.0.0.0:5000 --reuse-port --reload main:app"
 waitForPort = 5000
 
 [[ports]]
 localPort = 5000
 externalPort = 80
 
-[[ports]]
-localPort = 38989
-externalPort = 3000
-
 [deployment]
 deploymentTarget = "autoscale"
-run = ["node", "server.js"]
+run = ["gunicorn", "--bind", "0.0.0.0:5000", "main:app"]
 
 [userenv]
 
