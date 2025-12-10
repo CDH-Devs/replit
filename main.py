@@ -28,7 +28,155 @@ user_inline_keyboard = [
 song_query_cache = {}
 download_cache = {}
 youtube_quality_cache = {}
+url_download_cache = {}
 owner_mode = 'owner'
+
+URL_PATTERN = re.compile(
+    r'https?://(?:[\w-]+\.)*(?:'
+    r'youtube\.com|youtu\.be|'
+    r'tiktok\.com|'
+    r'instagram\.com|'
+    r'twitter\.com|x\.com|'
+    r'facebook\.com|fb\.watch|fb\.com|'
+    r'vimeo\.com|'
+    r'dailymotion\.com|'
+    r'reddit\.com|redd\.it|'
+    r'twitch\.tv|'
+    r'soundcloud\.com|'
+    r'spotify\.com|'
+    r'bandcamp\.com|'
+    r'bilibili\.com|b23\.tv|'
+    r'xhamster\.com|xhamster2\.com'
+    r')[^\s<>\[\]]*',
+    re.IGNORECASE
+)
+
+def extract_url_from_text(text):
+    """Extract the first supported URL from text"""
+    if not text:
+        return None
+    match = URL_PATTERN.search(text)
+    return match.group(0) if match else None
+
+def get_platform_emoji(platform):
+    """Get emoji for platform"""
+    emojis = {
+        'youtube': '📺',
+        'tiktok': '🎵',
+        'instagram': '📷',
+        'twitter': '🐦',
+        'facebook': '📘',
+        'vimeo': '🎬',
+        'reddit': '🔴',
+        'twitch': '💜',
+        'soundcloud': '🔊',
+        'spotify': '🎧',
+        'bandcamp': '🎸',
+        'dailymotion': '📹',
+        'bilibili': '📺',
+        'xhamster': '🔞'
+    }
+    return emojis.get(platform, '📥')
+
+def process_auto_url_download(url, handlers, chat_id, message_id, is_owner):
+    """Process any detected URL and show download options"""
+    try:
+        handlers.send_action(chat_id, 'typing')
+        
+        platform = detect_platform(url)
+        platform_name = platform.capitalize() if platform != 'unknown' else 'Media'
+        platform_emoji = get_platform_emoji(platform)
+        
+        status_msg_id = handlers.send_message(
+            chat_id,
+            html_bold(f'{platform_emoji} Fetching {platform_name} info...') + '\n\n⏳ Please wait...',
+            message_id
+        )
+        
+        if platform == 'tiktok':
+            handlers.edit_message(chat_id, status_msg_id, html_bold('🎵 Downloading TikTok video...'))
+            video_data = download_tiktok_video(url)
+            
+            if video_data.get('success'):
+                if video_data.get('type') == 'image' and video_data.get('images'):
+                    handlers.delete_message(chat_id, status_msg_id)
+                    caption = format_tiktok_caption(video_data)
+                    handlers.send_photos(chat_id, video_data['images'], caption, message_id, user_inline_keyboard)
+                    return
+                
+                video_url = video_data.get('video_url')
+                if video_url:
+                    handlers.delete_message(chat_id, status_msg_id)
+                    final_caption = format_tiktok_caption(video_data)
+                    handlers.send_action(chat_id, 'upload_video')
+                    
+                    cache_id = f"tkaudio_{chat_id}_{int(time.time() * 1000)}"
+                    keyboard = [
+                        [{"text": "🎵 Extract Audio", "callback_data": f"urldl_tkaudio_{cache_id}"}],
+                        [{"text": "LK NEWS Download Bot", "callback_data": "ignore_branding"}]
+                    ]
+                    url_download_cache[cache_id] = {'url': url, 'video_url': video_url, 'caption': final_caption, 'timestamp': time.time()}
+                    
+                    if video_data.get('video_hd') and video_data.get('video_sd'):
+                        handlers.send_video_with_quality_fallback(
+                            chat_id, video_data['video_hd'], video_data['video_sd'],
+                            final_caption, message_id, video_data.get('thumbnail'), keyboard
+                        )
+                    else:
+                        handlers.send_video(chat_id, video_url, final_caption, message_id, video_data.get('thumbnail'), keyboard)
+                    return
+            
+            handlers.edit_message(chat_id, status_msg_id, html_bold('❌ Failed to download TikTok video'))
+            return
+        
+        info = get_media_info(url)
+        
+        if not info.get('success'):
+            handlers.edit_message(chat_id, status_msg_id, html_bold('❌ Failed to fetch info: ') + info.get('error', 'Unknown error'))
+            return
+        
+        cache_id = f"urldl_{chat_id}_{int(time.time() * 1000)}"
+        url_download_cache[cache_id] = {
+            'url': url,
+            'info': info,
+            'chat_id': chat_id,
+            'timestamp': time.time()
+        }
+        
+        caption = (
+            f"{platform_emoji} <b>{platform_name} Download</b>\n\n"
+            f"🎬 <b>{info.get('title', 'Unknown')}</b>\n"
+            f"⏱ <b>Duration:</b> {format_duration(info.get('duration'))}\n"
+            f"👁 <b>Views:</b> {format_views(info.get('view_count'))}\n"
+            f"📺 <b>Uploader:</b> {info.get('uploader', 'Unknown')}\n\n"
+            f"<b>Select download option:</b>"
+        )
+        
+        keyboard = []
+        
+        video_formats = info.get('video_formats', {})
+        if video_formats:
+            video_row = []
+            for quality, fmt in list(video_formats.items())[:2]:
+                video_row.append({"text": f"🎬 {quality}", "callback_data": f"urldl_video_{quality}_{cache_id}"})
+            if video_row:
+                keyboard.append(video_row)
+        
+        if not keyboard:
+            keyboard.append([{"text": "🎬 Best Video", "callback_data": f"urldl_video_best_{cache_id}"}])
+        
+        keyboard.append([{"text": "🎵 Audio (MP3)", "callback_data": f"urldl_audio_best_{cache_id}"}])
+        keyboard.append([{"text": "LK NEWS Download Bot", "callback_data": "ignore_branding"}])
+        
+        if info.get('thumbnail'):
+            handlers.delete_message(chat_id, status_msg_id)
+            handlers.send_photo_with_caption(chat_id, info['thumbnail'], caption, message_id, keyboard)
+        else:
+            handlers.edit_message(chat_id, status_msg_id, caption, keyboard)
+        
+    except Exception as e:
+        print(f"[Auto URL] Error: {e}")
+        handlers.send_message(chat_id, html_bold('❌ Error processing URL: ') + str(e), message_id)
 
 def process_facebook_profile(url, handlers, chat_id, message_id, is_owner):
     """Download Facebook profile and cover photos - Owner only"""
@@ -434,22 +582,21 @@ def webhook():
 
 🎬 Welcome to <b>LK NEWS Download Bot</b>!
 
-📌 <b>Available Commands:</b>
+<b>🔗 Just send any link to download!</b>
+The bot automatically detects and downloads from:
 
-<b>🎥 /tiktok [url]</b>
-Download TikTok videos without watermark
-Example: <code>/tiktok https://vm.tiktok.com/xxx</code>
+📺 YouTube • 🎵 TikTok • 📷 Instagram
+🐦 Twitter/X • 📘 Facebook • 🎬 Vimeo
+🔴 Reddit • 💜 Twitch • 🔊 SoundCloud
+🎧 Spotify • 🎸 Bandcamp • And more!
 
-<b>🎵 /song [name or url]</b>
-Download songs from YouTube
-Example: <code>/song new sinhala dj song</code>
-Example: <code>/song https://youtube.com/watch?v=xxx</code>
+<b>📌 Or use commands:</b>
+• <b>/song [name]</b> - Search & download songs
+• <b>/tiktok [url]</b> - Download TikTok videos
 
 ◇───────────────◇
-
-🚀 <b>TikTok + YouTube Downloader</b>
+🚀 <b>Universal Media Downloader</b>
 🔥 <b>Powered by Replit</b>
-
 ◇───────────────◇"""
                     handlers.send_message(chat_id, user_text, message_id, user_inline_keyboard)
                 return jsonify({"ok": True})
@@ -711,36 +858,33 @@ Example: <code>/song https://youtube.com/watch?v=xxx</code>
                 threading.Thread(target=do_owner_download).start()
                 return jsonify({"ok": True})
             
-            # User mode: Detect YouTube links and show quality options
-            if text and is_youtube_url(text) and (not is_owner or owner_mode == 'user'):
-                status_msg_id = handlers.send_message(
-                    chat_id,
-                    html_bold('🎬 Fetching YouTube video info...') + '\n\n⏳ Please wait...',
-                    message_id
-                )
-                
-                def do_youtube_user():
-                    process_youtube_user_mode(text, handlers, chat_id, status_msg_id)
-                
-                threading.Thread(target=do_youtube_user).start()
-                return jsonify({"ok": True})
+            # Auto-detect any supported URL and show download options
+            if text:
+                detected_url = extract_url_from_text(text)
+                if detected_url and is_supported_url(detected_url):
+                    def do_auto_download():
+                        process_auto_url_download(detected_url, handlers, chat_id, message_id, is_owner)
+                    
+                    threading.Thread(target=do_auto_download).start()
+                    return jsonify({"ok": True})
             
             if text:
-                help_text = """📌 <b>Available Commands:</b>
+                help_text = """📌 <b>How to use this bot:</b>
 
-<b>🎥 /tiktok [url]</b>
-Download TikTok videos without watermark
-Example: <code>/tiktok https://vm.tiktok.com/xxx</code>
+<b>🔗 Just send a link!</b>
+The bot will automatically detect and download from:
 
-<b>🎵 /song [name or url]</b>
-Download songs from YouTube
-Example: <code>/song new sinhala dj song</code>
+📺 YouTube • 🎵 TikTok • 📷 Instagram
+🐦 Twitter/X • 📘 Facebook • 🎬 Vimeo
+🔴 Reddit • 💜 Twitch • 🔊 SoundCloud
+🎧 Spotify • 🎸 Bandcamp • And more!
 
-<b>🔗 YouTube Links</b>
-Just send a YouTube link to download video or audio
+<b>📌 Or use commands:</b>
+<b>/song [name]</b> - Search & download songs
+<b>/tiktok [url]</b> - Download TikTok videos
 
 ◇───────────────◇
-Send <b>/start</b> for more info!"""
+🚀 <b>Powered by LK NEWS Download Bot</b>"""
                 handlers.send_message(chat_id, help_text, message_id, user_inline_keyboard)
                 return jsonify({"ok": True})
         
@@ -849,6 +993,63 @@ Send <b>/start</b> for more info!"""
                     process_universal_download(cached_data['url'], handlers, chat_id, status_msg_id, False, format_type, quality)
                 
                 threading.Thread(target=do_ytdl_download).start()
+                return jsonify({"ok": True})
+            
+            # Universal URL download callbacks
+            if data.startswith('urldl_'):
+                parts = data.split('_')
+                action_type = parts[1]
+                
+                if action_type == 'tkaudio':
+                    cache_id = '_'.join(parts[2:])
+                    cached_data = url_download_cache.get(cache_id)
+                    
+                    if not cached_data:
+                        handlers.answer_callback_query(callback_query['id'], '❌ Request expired')
+                        return jsonify({"ok": True})
+                    
+                    handlers.answer_callback_query(callback_query['id'], '🎵 Extracting audio...')
+                    
+                    def do_tiktok_audio():
+                        success = extract_tiktok_audio(cached_data['video_url'], chat_id, cached_data['caption'], handlers)
+                        if not success:
+                            handlers.send_message(chat_id, html_bold('❌ Failed to extract audio.'), None)
+                        if cache_id in url_download_cache:
+                            del url_download_cache[cache_id]
+                    
+                    threading.Thread(target=do_tiktok_audio).start()
+                    return jsonify({"ok": True})
+                
+                format_type = action_type
+                quality = parts[2]
+                cache_id = '_'.join(parts[3:])
+                
+                cached_data = url_download_cache.get(cache_id)
+                
+                if not cached_data:
+                    handlers.answer_callback_query(callback_query['id'], '❌ Request expired')
+                    handlers.delete_message(chat_id, callback_message_id)
+                    handlers.send_message(chat_id, html_bold('❌ Request expired. Please send the link again.'), None)
+                    return jsonify({"ok": True})
+                
+                handlers.answer_callback_query(callback_query['id'], f'📥 Starting download...')
+                
+                handlers.delete_message(chat_id, callback_message_id)
+                
+                info = cached_data.get('info', {})
+                status_msg_id = handlers.send_message(
+                    chat_id,
+                    html_bold(f'📥 Downloading {format_type}...') + f'\n\n🎬 {info.get("title", "Media")}',
+                    None
+                )
+                
+                if cache_id in url_download_cache:
+                    del url_download_cache[cache_id]
+                
+                def do_urldl_download():
+                    process_universal_download(cached_data['url'], handlers, chat_id, status_msg_id, False, format_type, quality)
+                
+                threading.Thread(target=do_urldl_download).start()
                 return jsonify({"ok": True})
             
             # Owner mode multi-platform download
