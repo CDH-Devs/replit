@@ -4,7 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["openssl", "postgresql", "yt-dlp"]
+packages = ["libev", "openssl", "postgresql", "yt-dlp"]
 
 [workflows]
 runButton = "Project"
@@ -27,7 +27,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python -m gunicorn --bind 0.0.0.0:5000 --reuse-port --reload main:app"
+args = "python -m gunicorn --bind 0.0.0.0:5000 --reuse-port --reload --workers 4 --threads 2 --timeout 120 main:app"
 waitForPort = 5000
 
 [[ports]]
@@ -43,3 +43,5 @@ run = ["gunicorn", "--bind", "0.0.0.0:5000", "main:app"]
 [userenv.shared]
 BOT_TOKEN = "8488657540:AAEdxSgMh58TqMNQeh1zW2K2OEoQFl8Fwig"
 OWNER_ID = "1901997764"
+TELEGRAM_API_ID = "9049867"
+TELEGRAM_API_HASH = "972c0f2e94973b5ffa9a89cb34e5671b"
