@@ -98,28 +98,47 @@ def download_audio(video_url, output_path):
     print(f"[YouTube] Downloading audio from: {video_url}")
     
     try:
+        # Remove .mp3 extension if present, yt-dlp will add it
+        base_path = output_path.replace('.mp3', '').replace('.%(ext)s', '')
+        output_template = f"{base_path}.%(ext)s"
+        
         cmd = [
             'yt-dlp', '-x', '--audio-format', 'mp3',
             '--audio-quality', '0',
-            '--extractor-args', 'youtube:player_client=tv_embedded',
-            '-o', output_path,
+            '-o', output_template,
             video_url
         ]
         
+        print(f"[YouTube] Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
-        mp3_path = output_path.replace('.%(ext)s', '.mp3') if '.%(ext)s' in output_path else output_path
-        if not mp3_path.endswith('.mp3'):
-            mp3_path = output_path + '.mp3'
+        if result.returncode != 0:
+            print(f"[YouTube] yt-dlp stderr: {result.stderr}")
         
-        possible_paths = [output_path, mp3_path, output_path.rsplit('.', 1)[0] + '.mp3']
+        # The final file will be base_path.mp3
+        mp3_path = f"{base_path}.mp3"
+        
+        # Check multiple possible paths
+        possible_paths = [
+            mp3_path,
+            output_path,
+            f"{base_path}.m4a",
+            f"{base_path}.webm"
+        ]
         
         for path in possible_paths:
             if os.path.exists(path):
                 print(f"[YouTube] Download complete: {path}")
                 return path
         
+        # List temp directory to debug
+        temp_dir = os.path.dirname(base_path)
+        print(f"[YouTube] Files in {temp_dir}: {os.listdir(temp_dir)[:10]}")
+        
         raise Exception("File was not created")
+    except subprocess.TimeoutExpired:
+        print("[YouTube] Download timed out")
+        raise Exception("Download timed out")
     except Exception as e:
         print(f"[YouTube] Download failed: {e}")
         raise e
