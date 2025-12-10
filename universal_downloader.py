@@ -24,13 +24,13 @@ def detect_platform(url):
         return 'twitter'
     elif 'tiktok.com' in url_lower:
         return 'tiktok'
-    elif 'facebook.com' in url_lower or 'fb.watch' in url_lower:
+    elif 'facebook.com' in url_lower or 'fb.watch' in url_lower or 'fb.com' in url_lower:
         return 'facebook'
     elif 'vimeo.com' in url_lower:
         return 'vimeo'
     elif 'dailymotion.com' in url_lower:
         return 'dailymotion'
-    elif 'reddit.com' in url_lower:
+    elif 'reddit.com' in url_lower or 'redd.it' in url_lower:
         return 'reddit'
     elif 'twitch.tv' in url_lower:
         return 'twitch'
@@ -40,7 +40,7 @@ def detect_platform(url):
         return 'spotify'
     elif 'bandcamp.com' in url_lower:
         return 'bandcamp'
-    elif 'bilibili.com' in url_lower:
+    elif 'bilibili.com' in url_lower or 'b23.tv' in url_lower:
         return 'bilibili'
     return 'unknown'
 
