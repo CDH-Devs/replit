@@ -2,7 +2,18 @@ import requests
 import time
 import os
 import re
+import subprocess
+import tempfile
 from config import PROGRESS_STATES, MAX_FILE_SIZE_BYTES
+
+try:
+    from mtproto_client import mtproto_client
+    MTPROTO_AVAILABLE = mtproto_client.is_available()
+except ImportError:
+    MTPROTO_AVAILABLE = False
+    mtproto_client = None
+
+MAX_MTPROTO_SIZE = 2 * 1024 * 1024 * 1024
 
 class TelegramHandlers:
     def __init__(self, bot_token, owner_id=None):
@@ -324,37 +335,141 @@ class TelegramHandlers:
             print(f"[Handlers] sendPhotoFile failed: {e}")
             raise e
     
+    def compress_video(self, input_path, target_size_mb=48):
+        """Compress video to fit within Telegram's size limit using ffmpeg"""
+        try:
+            file_size_mb = os.path.getsize(input_path) / (1024 * 1024)
+            print(f"[Handlers] Compressing video from {file_size_mb:.1f}MB to under {target_size_mb}MB")
+            
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
+                 '-of', 'default=noprint_wrappers=1:nokey=1', input_path],
+                capture_output=True, text=True, timeout=30
+            )
+            duration = float(result.stdout.strip()) if result.stdout.strip() else 60
+            
+            target_bitrate = int((target_size_mb * 8 * 1024) / duration)
+            video_bitrate = max(target_bitrate - 128, 300)
+            
+            temp_dir = tempfile.gettempdir()
+            output_path = os.path.join(temp_dir, f"compressed_{int(time.time())}.mp4")
+            
+            cmd = [
+                'ffmpeg', '-y', '-i', input_path,
+                '-c:v', 'libx264', '-preset', 'fast',
+                '-b:v', f'{video_bitrate}k',
+                '-maxrate', f'{video_bitrate * 2}k',
+                '-bufsize', f'{video_bitrate * 2}k',
+                '-vf', 'scale=-2:720',
+                '-c:a', 'aac', '-b:a', '128k',
+                '-movflags', '+faststart',
+                output_path
+            ]
+            
+            print(f"[Handlers] Running ffmpeg compression (target {video_bitrate}kbps)...")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            
+            if os.path.exists(output_path):
+                compressed_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                print(f"[Handlers] Compression complete: {compressed_size_mb:.1f}MB")
+                
+                if compressed_size_mb <= target_size_mb:
+                    return output_path
+                elif compressed_size_mb <= 50:
+                    return output_path
+                else:
+                    cmd[cmd.index('-vf') + 1] = 'scale=-2:480'
+                    cmd[cmd.index('-b:v') + 1] = f'{max(video_bitrate // 2, 200)}k'
+                    output_path2 = os.path.join(temp_dir, f"compressed2_{int(time.time())}.mp4")
+                    cmd[cmd.index(output_path)] = output_path2
+                    
+                    print(f"[Handlers] Re-compressing at lower quality...")
+                    subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                    
+                    if os.path.exists(output_path2) and os.path.getsize(output_path2) <= 50 * 1024 * 1024:
+                        os.unlink(output_path)
+                        return output_path2
+                    
+                    return output_path
+            
+            print(f"[Handlers] Compression failed: {result.stderr[:200]}")
+            return None
+            
+        except Exception as e:
+            print(f"[Handlers] Compression error: {e}")
+            return None
+    
     def send_video_file(self, chat_id, file_path, caption, reply_to_message_id=None, keyboard=None):
         try:
             file_size = os.path.getsize(file_path)
-            print(f"[Handlers] Sending video file: {file_path} ({file_size} bytes)")
+            print(f"[Handlers] Sending video file: {file_path} ({file_size} bytes, {file_size / (1024*1024):.1f}MB)")
             
             if file_size > MAX_FILE_SIZE_BYTES:
-                raise Exception("File too large for Telegram (max 50MB)")
+                if MTPROTO_AVAILABLE and file_size <= MAX_MTPROTO_SIZE:
+                    print(f"[Handlers] File exceeds 50MB, using MTProto for upload...")
+                    result = mtproto_client.send_video(
+                        chat_id=chat_id,
+                        file_path=file_path,
+                        caption=caption,
+                        reply_to_message_id=reply_to_message_id
+                    )
+                    
+                    if result.get('ok'):
+                        print(f"[Handlers] Video sent successfully via MTProto")
+                        return result
+                    else:
+                        print(f"[Handlers] MTProto failed: {result.get('error')}, falling back to compression")
+                
+                print(f"[Handlers] Compressing video...")
+                compressed_path = self.compress_video(file_path)
+                
+                if compressed_path and os.path.exists(compressed_path):
+                    compressed_size = os.path.getsize(compressed_path)
+                    print(f"[Handlers] Compressed to {compressed_size / (1024*1024):.1f}MB")
+                    
+                    if compressed_size <= MAX_FILE_SIZE_BYTES:
+                        result = self._send_video_via_api(chat_id, compressed_path, caption + "\n\n<i>📦 Compressed</i>", reply_to_message_id, keyboard)
+                        try:
+                            os.unlink(compressed_path)
+                        except:
+                            pass
+                        return result
+                    else:
+                        try:
+                            os.unlink(compressed_path)
+                        except:
+                            pass
+                
+                raise Exception("File too large and compression/MTProto not available")
             
-            data = {
-                "chat_id": str(chat_id),
-                "caption": caption,
-                "parse_mode": "HTML"
-            }
+            return self._send_video_via_api(chat_id, file_path, caption, reply_to_message_id, keyboard)
             
-            if reply_to_message_id:
-                data["reply_to_message_id"] = str(reply_to_message_id)
-            
-            if keyboard:
-                import json
-                data["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
-            
-            with open(file_path, 'rb') as f:
-                files = {"video": ("video.mp4", f, "video/mp4")}
-                result = self.telegram_request("sendVideo", data, files)
-            
-            if not result.get("ok"):
-                print(f"[Handlers] sendVideoFile error: {result}")
-            else:
-                print(f"[Handlers] Video sent successfully")
-            
-            return result
         except Exception as e:
             print(f"[Handlers] sendVideoFile failed: {e}")
             raise e
+    
+    def _send_video_via_api(self, chat_id, file_path, caption, reply_to_message_id=None, keyboard=None):
+        """Send video via standard Bot API (for files under 50MB)"""
+        data = {
+            "chat_id": str(chat_id),
+            "caption": caption,
+            "parse_mode": "HTML"
+        }
+        
+        if reply_to_message_id:
+            data["reply_to_message_id"] = str(reply_to_message_id)
+        
+        if keyboard:
+            import json
+            data["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
+        
+        with open(file_path, 'rb') as f:
+            files = {"video": ("video.mp4", f, "video/mp4")}
+            result = self.telegram_request("sendVideo", data, files)
+        
+        if not result.get("ok"):
+            print(f"[Handlers] sendVideoFile error: {result}")
+        else:
+            print(f"[Handlers] Video sent successfully")
+        
+        return result
