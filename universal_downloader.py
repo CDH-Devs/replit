@@ -7,7 +7,7 @@ import re
 SUPPORTED_PLATFORMS = [
     'youtube', 'instagram', 'twitter', 'tiktok', 'facebook', 
     'vimeo', 'dailymotion', 'reddit', 'twitch', 'soundcloud',
-    'spotify', 'bandcamp', 'mixcloud', 'bilibili'
+    'spotify', 'bandcamp', 'mixcloud', 'bilibili', 'pronehub', 'xhamster', 'xhamster2'
 ]
 
 def detect_platform(url):
@@ -17,6 +17,8 @@ def detect_platform(url):
         return 'youtube'
     elif 'instagram.com' in url_lower:
         return 'instagram'
+    elif 'xhamster.com' in url_lower or 'xhamster2.com' in url_lower:
+        return 'xhamster'
     elif 'twitter.com' in url_lower or 'x.com' in url_lower:
         return 'twitter'
     elif 'tiktok.com' in url_lower:
