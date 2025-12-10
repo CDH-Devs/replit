@@ -11,7 +11,7 @@ def search_youtube(query, limit=50):
         cmd = [
             'yt-dlp', '--flat-playlist', 
             '--print', '%(id)s|%(title)s|%(duration)s',
-            '--extractor-args', 'youtube:player_client=tv_embedded',
+            '--no-warnings',
             f'ytsearch{limit}:{query}'
         ]
         
@@ -48,14 +48,22 @@ def get_video_metadata(video_url):
             'yt-dlp', '--print', 
             '%(title)s|||%(duration)s|||%(view_count)s|||%(like_count)s|||%(upload_date)s|||%(channel)s|||%(description)s|||%(thumbnail)s',
             '--no-playlist',
-            '--extractor-args', 'youtube:player_client=tv_embedded',
+            '--no-warnings',
             video_url
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         
-        parts = result.stdout.strip().split('|||')
+        output = result.stdout.strip()
+        print(f"[YouTube] Metadata output length: {len(output)}")
+        
+        if not output or '|||' not in output:
+            print(f"[YouTube] No valid metadata output")
+            return None
+        
+        parts = output.split('|||')
         if len(parts) < 8:
+            print(f"[YouTube] Insufficient parts: {len(parts)}")
             return None
         
         title, duration, views, likes, upload_date, channel, description, thumbnail = parts[:8]
@@ -80,7 +88,7 @@ def get_video_metadata(video_url):
             except:
                 return "0"
         
-        return {
+        metadata = {
             'title': title or 'Unknown',
             'duration': duration_formatted,
             'views': format_number(views),
@@ -90,6 +98,9 @@ def get_video_metadata(video_url):
             'description': (description or '')[:200],
             'thumbnail': thumbnail if thumbnail else None
         }
+        
+        print(f"[YouTube] Got metadata: title={metadata['title'][:50]}, thumbnail={'Yes' if metadata['thumbnail'] else 'No'}")
+        return metadata
     except Exception as e:
         print(f"[YouTube] Metadata error: {e}")
         return None
