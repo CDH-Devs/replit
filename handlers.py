@@ -323,3 +323,38 @@ class TelegramHandlers:
         except Exception as e:
             print(f"[Handlers] sendPhotoFile failed: {e}")
             raise e
+    
+    def send_video_file(self, chat_id, file_path, caption, reply_to_message_id=None, keyboard=None):
+        try:
+            file_size = os.path.getsize(file_path)
+            print(f"[Handlers] Sending video file: {file_path} ({file_size} bytes)")
+            
+            if file_size > MAX_FILE_SIZE_BYTES:
+                raise Exception("File too large for Telegram (max 50MB)")
+            
+            data = {
+                "chat_id": str(chat_id),
+                "caption": caption,
+                "parse_mode": "HTML"
+            }
+            
+            if reply_to_message_id:
+                data["reply_to_message_id"] = str(reply_to_message_id)
+            
+            if keyboard:
+                import json
+                data["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
+            
+            with open(file_path, 'rb') as f:
+                files = {"video": ("video.mp4", f, "video/mp4")}
+                result = self.telegram_request("sendVideo", data, files)
+            
+            if not result.get("ok"):
+                print(f"[Handlers] sendVideoFile error: {result}")
+            else:
+                print(f"[Handlers] Video sent successfully")
+            
+            return result
+        except Exception as e:
+            print(f"[Handlers] sendVideoFile failed: {e}")
+            raise e
