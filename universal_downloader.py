@@ -8,7 +8,7 @@ from locoloader_scraper import scrape_locoloader
 SUPPORTED_PLATFORMS = [
     'youtube', 'instagram', 'twitter', 'tiktok', 'facebook', 
     'vimeo', 'dailymotion', 'reddit', 'twitch', 'soundcloud',
-    'spotify', 'bandcamp', 'mixcloud', 'bilibili', 'pronehub', 'xhamster', 'xhamster2'
+    'spotify', 'bandcamp', 'mixcloud', 'bilibili', 'pornhub', 'xhamster', 'xhamster2'
 ]
 
 def detect_platform(url):
@@ -42,6 +42,8 @@ def detect_platform(url):
         return 'bandcamp'
     elif 'bilibili.com' in url_lower or 'b23.tv' in url_lower:
         return 'bilibili'
+    elif 'pornhub.com' in url_lower:
+        return 'pornhub'
     return 'unknown'
 
 def get_media_info(url):
