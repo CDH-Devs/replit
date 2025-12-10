@@ -3,54 +3,161 @@ import re
 import os
 import tempfile
 import time
+import subprocess
+from urllib.parse import quote, urlencode
 from bs4 import BeautifulSoup
 import json
 
-LOCOLOADER_URL = 'https://www.locoloader.com/'
-
 def scrape_locoloader(video_url, format_type='video'):
-    """Scrape locoloader.com to get download links"""
+    """Try multiple scrapers to download video"""
+    
+    result = try_tubeoffline(video_url, format_type)
+    if result.get('success'):
+        return result
+    
+    result = try_direct_scrape(video_url, format_type)
+    if result.get('success'):
+        return result
+    
+    return {'success': False, 'error': 'All download methods failed'}
+
+def try_tubeoffline(video_url, format_type):
+    """Try tubeoffline.com scraper"""
     try:
         session = requests.Session()
         
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
-            'Referer': 'https://www.locoloader.com/',
         }
         
-        print(f"[Locoloader] Fetching main page...")
-        main_page = session.get(LOCOLOADER_URL, headers=headers, timeout=30)
+        print(f"[TubeOffline] Trying to download: {video_url}")
         
-        extract_url = f'https://www.locoloader.com/extract/?url={requests.utils.quote(video_url)}'
+        api_url = 'https://www.tubeoffline.com/getvideoinfo.php'
+        form_data = {'url': video_url}
         
-        headers['Referer'] = LOCOLOADER_URL
-        headers['X-Requested-With'] = 'XMLHttpRequest'
+        headers['Referer'] = 'https://www.tubeoffline.com/'
+        headers['Origin'] = 'https://www.tubeoffline.com'
+        headers['Content-Type'] = 'application/x-www-form-urlencoded'
         
-        print(f"[Locoloader] Extracting: {video_url}")
-        response = session.get(extract_url, headers=headers, timeout=60)
+        response = session.post(api_url, data=form_data, headers=headers, timeout=60)
+        
+        print(f"[TubeOffline] Response status: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"[Locoloader] Error: Status {response.status_code}")
-            return {'success': False, 'error': f'Status {response.status_code}'}
+            return {'success': False, 'error': f'TubeOffline status {response.status_code}'}
         
         content = response.text
         
-        try:
-            data = response.json()
-            print(f"[Locoloader] Got JSON response")
-            return parse_json_response(data, format_type, session, headers)
-        except json.JSONDecodeError:
-            print(f"[Locoloader] Got HTML response, parsing...")
-            return parse_html_response(content, format_type, session, headers)
-            
-    except requests.Timeout:
-        return {'success': False, 'error': 'Request timed out'}
+        video_urls = re.findall(r'(https?://[^\s"\'<>]+\.(?:mp4|webm|m4v)[^\s"\'<>]*)', content)
+        
+        if video_urls:
+            download_url = video_urls[0]
+            print(f"[TubeOffline] Found video URL: {download_url[:80]}...")
+            return download_file_from_url(download_url, format_type, session, headers)
+        
+        return {'success': False, 'error': 'No video URL found in TubeOffline response'}
+        
     except Exception as e:
-        print(f"[Locoloader] Error: {e}")
+        print(f"[TubeOffline] Error: {e}")
+        return {'success': False, 'error': str(e)}
+
+def try_direct_scrape(video_url, format_type):
+    """Try to scrape video URL directly from the page"""
+    try:
+        session = requests.Session()
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Connection': 'keep-alive',
+        }
+        
+        print(f"[DirectScrape] Fetching page: {video_url}")
+        response = session.get(video_url, headers=headers, timeout=30)
+        
+        if response.status_code != 200:
+            return {'success': False, 'error': f'Page fetch failed: {response.status_code}'}
+        
+        content = response.text
+        
+        direct_mp4_patterns = [
+            r'"contentUrl"\s*:\s*"([^"]+\.mp4)"',
+            r'"videoUrl"\s*:\s*"([^"]+\.mp4)"',
+            r'source\s+src="([^"]+\.mp4)"',
+            r'<source[^>]+src="([^"]+\.mp4)"',
+            r'file:\s*["\']([^"\']+\.mp4)["\']',
+            r'(https?://[^\s"\'<>\\]+\.mp4)(?:[?\s"\'<>]|$)',
+        ]
+        
+        for pattern in direct_mp4_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            if matches:
+                video_file_url = matches[0]
+                video_file_url = video_file_url.replace('\\/', '/').replace('\\', '')
+                if video_file_url.startswith('//'):
+                    video_file_url = 'https:' + video_file_url
+                if '.m3u8' not in video_file_url:
+                    print(f"[DirectScrape] Found direct MP4: {video_file_url[:80]}...")
+                    headers['Referer'] = video_url
+                    return download_file_from_url(video_file_url, format_type, session, headers)
+        
+        m3u8_patterns = [
+            r'(https?://[^\s"\'<>\\]+\.m3u8[^\s"\'<>\\]*)',
+            r'"([^"]+\.m3u8[^"]*)"',
+        ]
+        
+        for pattern in m3u8_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            if matches:
+                m3u8_url = matches[0]
+                m3u8_url = m3u8_url.replace('\\/', '/').replace('\\', '')
+                if m3u8_url.startswith('//'):
+                    m3u8_url = 'https:' + m3u8_url
+                print(f"[DirectScrape] Found m3u8 stream: {m3u8_url[:80]}...")
+                return download_m3u8_stream(m3u8_url, video_url, format_type)
+        
+        return {'success': False, 'error': 'No video URL found in page'}
+        
+    except Exception as e:
+        print(f"[DirectScrape] Error: {e}")
+        return {'success': False, 'error': str(e)}
+
+def download_m3u8_stream(m3u8_url, referer_url, format_type):
+    """Download m3u8 stream using ffmpeg"""
+    try:
+        
+        temp_dir = tempfile.gettempdir()
+        ext = '.mp4' if format_type == 'video' else '.mp3'
+        output_path = os.path.join(temp_dir, f"stream_{int(time.time())}{ext}")
+        
+        print(f"[M3U8] Downloading stream with ffmpeg...")
+        
+        cmd = [
+            'ffmpeg', '-y',
+            '-headers', f'Referer: {referer_url}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n',
+            '-i', m3u8_url,
+            '-c', 'copy',
+            '-bsf:a', 'aac_adtstoasc',
+            output_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
+            print(f"[M3U8] Download complete: {output_path} ({os.path.getsize(output_path)} bytes)")
+            return {'success': True, 'path': output_path, 'type': format_type}
+        else:
+            print(f"[M3U8] ffmpeg error: {result.stderr[:500] if result.stderr else 'Unknown error'}")
+            return {'success': False, 'error': 'Stream download failed'}
+            
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'error': 'Stream download timed out'}
+    except Exception as e:
+        print(f"[M3U8] Error: {e}")
         return {'success': False, 'error': str(e)}
 
 
@@ -100,11 +207,11 @@ def parse_html_response(html, format_type, session, headers):
             href = a['href']
             text = a.get_text().lower()
             
-            if any(x in href.lower() for x in ['.mp4', '.webm', '.mp3', '.m4a', 'download', 'video', 'audio']):
+            if any(x in str(href).lower() for x in ['.mp4', '.webm', '.mp3', '.m4a', 'download', 'video', 'audio']):
                 download_links.append({
                     'url': href,
                     'text': text,
-                    'is_audio': 'audio' in text or '.mp3' in href or '.m4a' in href
+                    'is_audio': 'audio' in text or '.mp3' in str(href) or '.m4a' in str(href)
                 })
         
         for video in soup.find_all('video'):
