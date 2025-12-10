@@ -288,3 +288,38 @@ class TelegramHandlers:
         except Exception as e:
             print(f"[Handlers] sendAudioFile failed: {e}")
             raise e
+    
+    def send_photo_file(self, chat_id, file_path, caption, reply_to_message_id=None, keyboard=None):
+        try:
+            file_size = os.path.getsize(file_path)
+            print(f"[Handlers] Sending photo file: {file_path} ({file_size} bytes)")
+            
+            if file_size > MAX_FILE_SIZE_BYTES:
+                raise Exception("File too large for Telegram")
+            
+            data = {
+                "chat_id": str(chat_id),
+                "caption": caption,
+                "parse_mode": "HTML"
+            }
+            
+            if reply_to_message_id:
+                data["reply_to_message_id"] = str(reply_to_message_id)
+            
+            if keyboard:
+                import json
+                data["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
+            
+            with open(file_path, 'rb') as f:
+                files = {"photo": ("photo.jpg", f, "image/jpeg")}
+                result = self.telegram_request("sendPhoto", data, files)
+            
+            if not result.get("ok"):
+                print(f"[Handlers] sendPhotoFile error: {result}")
+            else:
+                print(f"[Handlers] Photo sent successfully")
+            
+            return result
+        except Exception as e:
+            print(f"[Handlers] sendPhotoFile failed: {e}")
+            raise e
