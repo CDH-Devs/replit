@@ -46,7 +46,8 @@ URL_PATTERN = re.compile(
     r'spotify\.com|'
     r'bandcamp\.com|'
     r'bilibili\.com|b23\.tv|'
-    r'xhamster\.com|xhamster2\.com'
+    r'xhamster\.com|xhamster2\.com|'
+    r'pornhub\.com'
     r')[^\s<>\[\]]*',
     re.IGNORECASE
 )
@@ -74,7 +75,8 @@ def get_platform_emoji(platform):
         'bandcamp': '🎸',
         'dailymotion': '📹',
         'bilibili': '📺',
-        'xhamster': '🔞'
+        'xhamster': '🔞',
+        'pornhub': '🔞'
     }
     return emojis.get(platform, '📥')
 
