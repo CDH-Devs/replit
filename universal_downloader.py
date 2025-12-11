@@ -3,13 +3,27 @@ import tempfile
 import os
 import json
 import re
-from locoloader_scraper import scrape_locoloader
+import time
+import requests
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from functools import lru_cache
+from locoloader_scraper import scrape_locoloader, try_direct_scrape
 
 SUPPORTED_PLATFORMS = [
     'youtube', 'instagram', 'twitter', 'tiktok', 'facebook', 
     'vimeo', 'dailymotion', 'reddit', 'twitch', 'soundcloud',
     'spotify', 'bandcamp', 'mixcloud', 'bilibili', 'pornhub', 'xhamster', 'xhamster2'
 ]
+
+SESSION_POOL = requests.Session()
+SESSION_POOL.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+})
+
+MEDIA_INFO_CACHE = {}
+CACHE_TTL = 300
+
+EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 def detect_platform(url):
     """Detect the platform from URL"""
@@ -46,11 +60,28 @@ def detect_platform(url):
         return 'pornhub'
     return 'unknown'
 
+def get_cached_info(url):
+    """Get cached media info if available and not expired"""
+    if url in MEDIA_INFO_CACHE:
+        cached = MEDIA_INFO_CACHE[url]
+        if time.time() - cached['timestamp'] < CACHE_TTL:
+            return cached['data']
+    return None
+
+def cache_info(url, data):
+    """Cache media info with timestamp"""
+    MEDIA_INFO_CACHE[url] = {'data': data, 'timestamp': time.time()}
+
 def get_media_info(url):
-    """Get media information using yt-dlp"""
+    """Get media information using yt-dlp with caching"""
+    cached = get_cached_info(url)
+    if cached:
+        print(f"[Downloader] Using cached info for: {url[:50]}...")
+        return cached
+    
     try:
-        cmd = ['yt-dlp', '-j', '--no-playlist', url]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        cmd = ['yt-dlp', '-j', '--no-playlist', '--socket-timeout', '15', url]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
         if result.returncode != 0:
             return {'success': False, 'error': result.stderr or 'Failed to fetch info'}
@@ -97,7 +128,7 @@ def get_media_info(url):
         sorted_videos = sorted(video_formats.items(), key=lambda x: x[1].get('height', 0), reverse=True)
         sorted_audios = sorted(audio_formats.items(), key=lambda x: x[1].get('abr', 0), reverse=True)
         
-        return {
+        result = {
             'success': True,
             'title': info.get('title', 'Unknown'),
             'duration': info.get('duration'),
@@ -109,6 +140,8 @@ def get_media_info(url):
             'audio_formats': dict(sorted_audios[:3]),
             'url': url
         }
+        cache_info(url, result)
+        return result
         
     except subprocess.TimeoutExpired:
         return {'success': False, 'error': 'Request timed out'}
@@ -164,74 +197,95 @@ def get_youtube_quality_options(url):
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
+def download_with_ytdlp(url, format_type, quality, output_template):
+    """Download using yt-dlp (for ThreadPoolExecutor)"""
+    import glob as glob_module
+    
+    common_opts = [
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--referer', url,
+        '--no-check-certificates',
+        '--geo-bypass',
+        '--no-playlist',
+        '--socket-timeout', '20',
+        '--retries', '3',
+        '--concurrent-fragments', '4',
+        '--buffer-size', '16K',
+    ]
+    
+    if format_type == 'audio':
+        cmd = [
+            'yt-dlp', '-x', '--audio-format', 'mp3',
+            '--audio-quality', '0',
+            '-o', f"{output_template}.%(ext)s",
+        ] + common_opts + [url]
+    else:
+        if quality == '720':
+            format_str = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best'
+        elif quality == '480':
+            format_str = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best'
+        elif quality == '360':
+            format_str = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]/best'
+        else:
+            format_str = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        
+        cmd = [
+            'yt-dlp', '-f', format_str,
+            '--merge-output-format', 'mp4',
+            '-o', f"{output_template}.%(ext)s",
+        ] + common_opts + [url]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    
+    possible_files = glob_module.glob(f"{output_template}.*")
+    
+    if format_type == 'audio':
+        for path in possible_files:
+            if path.endswith(('.mp3', '.m4a', '.opus', '.webm', '.ogg')):
+                return {'success': True, 'path': path, 'type': 'audio'}
+    else:
+        for path in possible_files:
+            if path.endswith(('.mp4', '.mkv', '.webm', '.avi')):
+                return {'success': True, 'path': path, 'type': 'video'}
+    
+    if possible_files:
+        return {'success': True, 'path': possible_files[0], 'type': format_type}
+    
+    return {'success': False, 'error': result.stderr or 'yt-dlp download failed'}
+
 def download_media(url, format_type='video', quality='best'):
-    """Download media using yt-dlp with fallback to scraper"""
+    """Download media using yt-dlp with DirectScrape fallback"""
     try:
         temp_dir = tempfile.gettempdir()
-        timestamp = int(__import__('time').time() * 1000)
+        timestamp = int(time.time() * 1000)
+        output_template = os.path.join(temp_dir, f"download_{timestamp}")
         
-        common_opts = [
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            '--referer', url,
-            '--no-check-certificates',
-            '--geo-bypass',
-            '--no-playlist',
-            '--socket-timeout', '30',
-            '--retries', '5',
-        ]
+        print(f"[Downloader] Fast download for: {url}")
         
-        if format_type == 'audio':
-            output_template = os.path.join(temp_dir, f"download_{timestamp}")
-            cmd = [
-                'yt-dlp', '-x', '--audio-format', 'mp3',
-                '--audio-quality', '0',
-                '-o', f"{output_template}.%(ext)s",
-            ] + common_opts + [url]
-        else:
-            output_template = os.path.join(temp_dir, f"download_{timestamp}")
+        try:
+            future = EXECUTOR.submit(download_with_ytdlp, url, format_type, quality, output_template)
+            result = future.result(timeout=180)
             
-            if quality == '720':
-                format_str = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-            elif quality == '480':
-                format_str = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
-            elif quality == '360':
-                format_str = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
-            else:
-                format_str = 'bestvideo+bestaudio/best'
-            
-            cmd = [
-                'yt-dlp', '-f', format_str,
-                '--merge-output-format', 'mp4',
-                '-o', f"{output_template}.%(ext)s",
-            ] + common_opts + [url]
+            if result.get('success'):
+                print(f"[Downloader] yt-dlp success: {result.get('path')}")
+                return result
+        except (FuturesTimeoutError, Exception) as e:
+            print(f"[Downloader] yt-dlp failed: {e}")
         
-        print(f"[Downloader] Running yt-dlp for: {url}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        print(f"[Downloader] Trying DirectScrape fallback...")
+        direct_result = try_direct_scrape(url, format_type)
+        if direct_result.get('success'):
+            print(f"[Downloader] DirectScrape success: {direct_result.get('path')}")
+            return direct_result
         
-        import glob
-        possible_files = glob.glob(f"{output_template}.*")
-        
-        if format_type == 'audio':
-            for path in possible_files:
-                if path.endswith(('.mp3', '.m4a', '.opus', '.webm', '.ogg')):
-                    return {'success': True, 'path': path, 'type': 'audio'}
-        else:
-            for path in possible_files:
-                if path.endswith(('.mp4', '.mkv', '.webm', '.avi')):
-                    return {'success': True, 'path': path, 'type': 'video'}
-        
-        if possible_files:
-            return {'success': True, 'path': possible_files[0], 'type': format_type}
-        
-        print(f"[Downloader] yt-dlp failed, trying scraper fallback...")
+        print(f"[Downloader] Trying locoloader scraper fallback...")
         scraper_result = scrape_locoloader(url, format_type)
         if scraper_result.get('success'):
+            print(f"[Downloader] Scraper success: {scraper_result.get('path')}")
             return scraper_result
         
-        return {'success': False, 'error': result.stderr or 'Download failed'}
+        return {'success': False, 'error': 'All download methods failed'}
         
-    except subprocess.TimeoutExpired:
-        return {'success': False, 'error': 'Download timed out'}
     except Exception as e:
         print(f"[Downloader] Error: {e}")
         return {'success': False, 'error': str(e)}
