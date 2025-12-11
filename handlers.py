@@ -3,15 +3,26 @@ import json
 import asyncio
 import threading
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from pyrogram import Client
 from pyrogram.errors import FloodWait
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 API_ID = os.environ.get('TELEGRAM_API_ID')
 API_HASH = os.environ.get('TELEGRAM_API_HASH')
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 
 USER_IDS_FILE = 'user_ids.json'
+
+TELEGRAM_SESSION = requests.Session()
+retry_strategy = Retry(total=3, backoff_factor=0.1, status_forcelist=[500, 502, 503, 504])
+adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=20)
+TELEGRAM_SESSION.mount("https://", adapter)
+TELEGRAM_SESSION.mount("http://", adapter)
+
+HANDLER_EXECUTOR = ThreadPoolExecutor(max_workers=6)
 
 
 class TelegramHandlers:
@@ -21,14 +32,15 @@ class TelegramHandlers:
         self.api_url = f"https://api.telegram.org/bot{bot_token}"
         self.progress_active = {}
         self.video_audio_cache = {}
+        self.session = TELEGRAM_SESSION
     
     def _make_request(self, method, data=None, files=None):
         url = f"{self.api_url}/{method}"
         try:
             if files:
-                response = requests.post(url, data=data, files=files, timeout=300)
+                response = self.session.post(url, data=data, files=files, timeout=300)
             else:
-                response = requests.post(url, json=data, timeout=60)
+                response = self.session.post(url, json=data, timeout=30)
             return response.json()
         except Exception as e:
             print(f"[Telegram API] Error in {method}: {e}")
