@@ -16,6 +16,7 @@ from universal_downloader import (
     detect_platform, get_media_info, get_youtube_quality_options,
     download_media, format_duration, format_views, is_supported_url
 )
+from pexels_downloader import process_korean_video, cleanup_files
 
 app = Flask(__name__)
 
@@ -666,6 +667,70 @@ The bot automatically detects and downloads from:
                     
                     threading.Thread(target=do_single_download).start()
                 
+                return jsonify({"ok": True})
+            
+            # /korean command - Download Korean videos from Pexels with viral music
+            if text and text.lower().startswith('/korean'):
+                if not is_owner:
+                    handlers.send_message(chat_id, html_bold('❌ This command is only available for the owner.'), message_id)
+                    return jsonify({"ok": True})
+                
+                status_msg_id = handlers.send_message(
+                    chat_id,
+                    html_bold('🇰🇷 Korean Video Generator') + '\n\n' +
+                    '📥 Fetching random Korean video...\n' +
+                    '🎵 Adding viral music...\n' +
+                    '⏳ Please wait...',
+                    message_id
+                )
+                
+                def process_korean():
+                    try:
+                        handlers.send_action(chat_id, 'upload_video')
+                        
+                        result = process_korean_video()
+                        
+                        if not result.get('success'):
+                            handlers.edit_message(
+                                chat_id, status_msg_id,
+                                html_bold('❌ Failed to get video') + f"\n\n{result.get('error', 'Unknown error')}"
+                            )
+                            return
+                        
+                        video_path = result.get('video_path')
+                        caption = result.get('caption')
+                        cleanup_paths = result.get('cleanup_paths', [])
+                        
+                        handlers.edit_message(chat_id, status_msg_id, html_bold('📤 Uploading video...'))
+                        handlers.send_action(chat_id, 'upload_video')
+                        
+                        keyboard = [[{"text": "LK NEWS Download Bot", "callback_data": "ignore_branding"}]]
+                        send_result = handlers.send_video_file(chat_id, video_path, caption, message_id, keyboard)
+                        
+                        cleanup_files(cleanup_paths)
+                        
+                        if send_result and send_result.get('ok'):
+                            handlers.edit_message(
+                                chat_id, status_msg_id,
+                                html_bold('✅ Korean Video Sent!') + '\n\n' +
+                                f"📹 Video ID: {result.get('video_id')}\n" +
+                                f"📸 By: {result.get('photographer')}"
+                            )
+                        else:
+                            error_msg = send_result.get('description', 'Upload failed') if send_result else 'No response'
+                            handlers.edit_message(
+                                chat_id, status_msg_id,
+                                html_bold('❌ Upload failed') + f"\n\n{error_msg}"
+                            )
+                        
+                    except Exception as e:
+                        print(f"[Korean] Error: {e}")
+                        handlers.edit_message(
+                            chat_id, status_msg_id,
+                            html_bold('❌ Error processing video') + f"\n\n{str(e)}"
+                        )
+                
+                threading.Thread(target=process_korean).start()
                 return jsonify({"ok": True})
             
             # /tiktok command
