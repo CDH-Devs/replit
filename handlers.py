@@ -160,9 +160,11 @@ class TelegramHandlers:
     def send_video_file(self, chat_id, file_path, caption, reply_to_message_id=None, keyboard=None):
         file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
         
-        if file_size > 50 * 1024 * 1024:
+        # Always use MTProto for video uploads - it's much faster
+        if mtproto_client.is_available() and file_size > 5 * 1024 * 1024:
             result = mtproto_client.send_video(chat_id, file_path, caption, reply_to_message_id)
-            return result
+            if result.get('ok'):
+                return result
         
         data = {
             'chat_id': chat_id,
@@ -181,9 +183,11 @@ class TelegramHandlers:
     def send_audio_file(self, chat_id, file_path, title, reply_to_message_id=None, keyboard=None):
         file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
         
-        if file_size > 50 * 1024 * 1024:
+        # Use MTProto for audio uploads over 5MB - it's faster
+        if mtproto_client.is_available() and file_size > 5 * 1024 * 1024:
             result = mtproto_client.send_audio(chat_id, file_path, title, None, reply_to_message_id)
-            return result
+            if result.get('ok'):
+                return result
         
         data = {
             'chat_id': chat_id,
