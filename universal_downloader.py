@@ -202,15 +202,20 @@ def download_with_ytdlp(url, format_type, quality, output_template):
     import glob as glob_module
     
     common_opts = [
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         '--referer', url,
         '--no-check-certificates',
         '--geo-bypass',
         '--no-playlist',
-        '--socket-timeout', '20',
-        '--retries', '3',
+        '--socket-timeout', '30',
+        '--retries', '5',
+        '--fragment-retries', '5',
         '--concurrent-fragments', '4',
-        '--buffer-size', '16K',
+        '--buffer-size', '32K',
+        '--extractor-retries', '3',
+        '--no-warnings',
+        '--prefer-free-formats',
+        '--ignore-errors',
     ]
     
     if format_type == 'audio':
@@ -221,13 +226,13 @@ def download_with_ytdlp(url, format_type, quality, output_template):
         ] + common_opts + [url]
     else:
         if quality == '720':
-            format_str = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best'
+            format_str = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
         elif quality == '480':
-            format_str = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best'
+            format_str = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
         elif quality == '360':
-            format_str = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]/best'
+            format_str = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
         else:
-            format_str = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+            format_str = 'bestvideo+bestaudio/best'
         
         cmd = [
             'yt-dlp', '-f', format_str,
@@ -235,7 +240,8 @@ def download_with_ytdlp(url, format_type, quality, output_template):
             '-o', f"{output_template}.%(ext)s",
         ] + common_opts + [url]
     
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    print(f"[yt-dlp] Running: {' '.join(cmd[:10])}...")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     
     possible_files = glob_module.glob(f"{output_template}.*")
     
@@ -260,31 +266,38 @@ def download_media(url, format_type='video', quality='best'):
         timestamp = int(time.time() * 1000)
         output_template = os.path.join(temp_dir, f"download_{timestamp}")
         
-        print(f"[Downloader] Fast download for: {url}")
+        print(f"[Downloader] Starting download for: {url}")
+        print(f"[Downloader] Format: {format_type}, Quality: {quality}")
         
         try:
             future = EXECUTOR.submit(download_with_ytdlp, url, format_type, quality, output_template)
-            result = future.result(timeout=180)
+            result = future.result(timeout=300)
             
             if result.get('success'):
                 print(f"[Downloader] yt-dlp success: {result.get('path')}")
                 return result
-        except (FuturesTimeoutError, Exception) as e:
-            print(f"[Downloader] yt-dlp failed: {e}")
+            else:
+                print(f"[Downloader] yt-dlp returned error: {result.get('error')}")
+        except FuturesTimeoutError:
+            print(f"[Downloader] yt-dlp timed out after 300s")
+        except Exception as e:
+            print(f"[Downloader] yt-dlp exception: {type(e).__name__}: {e}")
         
-        print(f"[Downloader] Trying DirectScrape fallback...")
-        direct_result = try_direct_scrape(url, format_type)
-        if direct_result.get('success'):
-            print(f"[Downloader] DirectScrape success: {direct_result.get('path')}")
-            return direct_result
+        platform = detect_platform(url)
+        if platform not in ['youtube']:
+            print(f"[Downloader] Trying DirectScrape fallback for {platform}...")
+            direct_result = try_direct_scrape(url, format_type)
+            if direct_result.get('success'):
+                print(f"[Downloader] DirectScrape success: {direct_result.get('path')}")
+                return direct_result
+            
+            print(f"[Downloader] Trying locoloader scraper fallback...")
+            scraper_result = scrape_locoloader(url, format_type)
+            if scraper_result.get('success'):
+                print(f"[Downloader] Scraper success: {scraper_result.get('path')}")
+                return scraper_result
         
-        print(f"[Downloader] Trying locoloader scraper fallback...")
-        scraper_result = scrape_locoloader(url, format_type)
-        if scraper_result.get('success'):
-            print(f"[Downloader] Scraper success: {scraper_result.get('path')}")
-            return scraper_result
-        
-        return {'success': False, 'error': 'All download methods failed'}
+        return {'success': False, 'error': 'Download failed - please try again later'}
         
     except Exception as e:
         print(f"[Downloader] Error: {e}")
