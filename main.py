@@ -374,21 +374,30 @@ def process_universal_download(url, handlers, chat_id, message_id, is_owner, sel
             handlers.edit_message(chat_id, message_id, html_bold('❌ Downloaded file not found'))
             return
         
-        handlers.edit_message(chat_id, message_id, html_bold(f'📤 Uploading {selected_format}...'))
+        file_size = os.path.getsize(file_path)
+        print(f"[Upload] Starting upload: {file_path} ({file_size} bytes)")
+        handlers.edit_message(chat_id, message_id, html_bold(f'📤 Uploading {selected_format}... ({file_size // 1024 // 1024}MB)'))
         
         if result.get('type') == 'audio':
             handlers.send_action(chat_id, 'upload_audio')
-            handlers.send_audio_file(chat_id, file_path, f"{platform_name} Audio", None)
+            send_result = handlers.send_audio_file(chat_id, file_path, f"{platform_name} Audio", None)
         else:
             handlers.send_action(chat_id, 'upload_video')
-            handlers.send_video_file(chat_id, file_path, f"📥 Downloaded from {platform_name}", None)
+            send_result = handlers.send_video_file(chat_id, file_path, f"📥 Downloaded from {platform_name}", None)
+        
+        print(f"[Upload] Send result: {send_result}")
         
         try:
             os.unlink(file_path)
         except:
             pass
         
-        handlers.edit_message(chat_id, message_id, html_bold('✅ Download Complete!'))
+        if send_result and send_result.get('ok'):
+            handlers.edit_message(chat_id, message_id, html_bold('✅ Download Complete!'))
+        else:
+            error_msg = send_result.get('description', 'Upload failed') if send_result else 'No response'
+            print(f"[Upload] Failed: {error_msg}")
+            handlers.edit_message(chat_id, message_id, html_bold('❌ Upload failed: ') + error_msg)
         
     except Exception as e:
         print(f"[Universal Download] Error: {e}")
