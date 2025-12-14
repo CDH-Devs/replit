@@ -4,7 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["libev", "openssl", "postgresql", "yt-dlp"]
+packages = ["libev", "openssl", "postgresql", "yt-dlp", "ffmpeg"]
 
 [workflows]
 runButton = "Project"
@@ -27,7 +27,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python -m gunicorn --bind 0.0.0.0:5000 --reuse-port --reload --workers 4 --threads 2 --timeout 120 main:app"
+args = "python -m gunicorn --bind 0.0.0.0:5000 --reuse-port --reload --workers 1 --timeout 120 main:app"
 waitForPort = 5000
 
 [[ports]]
