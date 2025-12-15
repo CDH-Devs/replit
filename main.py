@@ -4,7 +4,7 @@ import threading
 import os
 import tempfile
 import subprocess
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, Response
 from config import BOT_TOKEN, OWNER_ID, PROGRESS_STATES
 from handlers import TelegramHandlers
 from tiktok_api import download_tiktok_video
@@ -503,6 +503,95 @@ def extract_tiktok_audio(video_url, chat_id, caption, handlers):
 @app.route('/', methods=['GET'])
 def home():
     return 'Hello! I am LK NEWS Download Bot - Your TikTok Video Downloader.'
+
+@app.route('/hacker', methods=['GET'])
+def hacker_page():
+    return render_template('hacker.html')
+
+@app.route('/hacker/preview', methods=['POST'])
+def hacker_preview():
+    url = request.form.get('url', '').strip()
+    
+    if not url:
+        return render_template('hacker.html', error='No URL provided. Please enter a valid URL.')
+    
+    if not is_youtube_url(url) and not is_supported_url(url):
+        return render_template('hacker.html', error='Invalid or unsupported URL. Please enter a valid YouTube or media URL.')
+    
+    try:
+        info = get_media_info(url)
+        
+        if not info.get('success'):
+            return render_template('hacker.html', error=f"Failed to fetch media info: {info.get('error', 'Unknown error')}")
+        
+        code_snippets = [
+            '<input name="4" onclick="button(4,\')" type="button" value=" 4 ">',
+            'SELECT * FROM media WHERE url = "encrypted";',
+            'function extract(hash) { return decode(hash); }',
+            'const API = process.env.SECRET_KEY;',
+            'ssh -i key.pem root@server.extract',
+            'PASSWORD_DECRYPT... ████████░░',
+        ]
+        import random
+        code_text = '\n'.join(random.sample(code_snippets, min(4, len(code_snippets))))
+        
+        preview = {
+            'title': info.get('title', 'Unknown'),
+            'thumbnail': info.get('thumbnail', ''),
+            'duration': format_duration(info.get('duration')),
+            'uploader': info.get('uploader', 'Unknown'),
+            'views': format_views(info.get('view_count'))
+        }
+        
+        return render_template('hacker.html', preview=preview, url=url, code_text=code_text)
+        
+    except Exception as e:
+        print(f"[Hacker Preview] Error: {e}")
+        return render_template('hacker.html', error=f'Error processing URL: {str(e)}')
+
+@app.route('/hacker/download', methods=['POST'])
+def hacker_download():
+    url = request.form.get('url', '').strip()
+    format_type = request.form.get('format', 'video')
+    
+    if not url:
+        return render_template('hacker.html', error='No URL provided.')
+    
+    try:
+        result = download_media(url, format_type, 'best')
+        
+        if not result.get('success'):
+            return render_template('hacker.html', error=f"Download failed: {result.get('error', 'Unknown error')}")
+        
+        file_path = result.get('path')
+        if not file_path or not os.path.exists(file_path):
+            return render_template('hacker.html', error='Downloaded file not found.')
+        
+        filename = os.path.basename(file_path)
+        
+        def generate_and_cleanup():
+            try:
+                with open(file_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                try:
+                    os.unlink(file_path)
+                except:
+                    pass
+        
+        return Response(
+            generate_and_cleanup(),
+            mimetype='application/octet-stream',
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+        )
+        
+    except Exception as e:
+        print(f"[Hacker Download] Error: {e}")
+        return render_template('hacker.html', error=f'Download error: {str(e)}')
 
 @app.route('/', methods=['POST'])
 def webhook():
