@@ -332,13 +332,125 @@
             border-top: 1px solid #003300;
             margin-top: 30px;
         }
+
+        .password-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+
+        .password-box {
+            background: rgba(0, 20, 0, 0.9);
+            border: 2px solid #00ff00;
+            border-radius: 5px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
+        }
+
+        .password-box h2 {
+            color: #00ff00;
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px #00ff00;
+        }
+
+        .password-input {
+            width: 200px;
+            padding: 10px;
+            background: #001100;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 1.2em;
+            text-align: center;
+            outline: none;
+            letter-spacing: 5px;
+        }
+
+        .password-input:focus {
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+
+        .password-error {
+            color: #ff0000;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .feature-card {
+            background: rgba(0, 30, 0, 0.8);
+            border: 1px solid #00ff00;
+            padding: 20px;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 255, 0, 0.3);
+        }
+
+        .feature-card h3 {
+            color: #00ff00;
+            margin-bottom: 10px;
+        }
+
+        .feature-card p {
+            color: #008800;
+            font-size: 0.9em;
+        }
+
+        .platform-icons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+
+        .platform-icon {
+            font-size: 2em;
+            padding: 10px;
+            border: 1px solid #004400;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+
+        .platform-icon:hover {
+            border-color: #00ff00;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+        }
     </style>
 </head>
 <body>
     <canvas id="matrix-bg"></canvas>
     <div class="scanline"></div>
 
-    <div class="container">
+    <div class="password-overlay" id="password-overlay">
+        <div class="password-box">
+            <h2>[ ACCESS RESTRICTED ]</h2>
+            <p style="color: #008800; margin-bottom: 20px;">Enter access code:</p>
+            <input type="password" id="password-input" class="password-input" maxlength="4" placeholder="****" autofocus>
+            <p class="password-error" id="password-error">ACCESS DENIED - Invalid code</p>
+            <p style="color: #004400; margin-top: 20px; font-size: 0.8em;">Hint: Year of establishment</p>
+        </div>
+    </div>
+
+    <div class="container" id="main-content" style="display: none;">
         <div class="header">
             <h1>[ LK NEWS ]</h1>
             <p>/// MEDIA EXTRACTION SYSTEM v2.0 ///</p>
@@ -356,18 +468,16 @@
 
             <div class="code-rain" id="code-rain"></div>
 
-            <form id="url-form" method="POST" action="/hacker/preview">
-                <div class="input-section">
-                    <label for="url-input">PASTE TARGET URL:</label>
-                    <input type="text" id="url-input" name="url" class="url-input" 
-                           placeholder="https://youtube.com/watch?v=..." 
-                           autocomplete="off" required>
-                </div>
-                <div class="buttons-row">
-                    <button type="submit" class="btn" id="analyze-btn">[ANALYZE]</button>
-                    <button type="button" class="btn" id="clear-btn">[CLEAR]</button>
-                </div>
-            </form>
+            <div class="input-section">
+                <label for="url-input">PASTE TARGET URL:</label>
+                <input type="text" id="url-input" class="url-input" 
+                       placeholder="https://youtube.com/watch?v=..." 
+                       autocomplete="off">
+            </div>
+            <div class="buttons-row">
+                <button type="button" class="btn" id="analyze-btn">[ANALYZE]</button>
+                <button type="button" class="btn" id="clear-btn">[CLEAR]</button>
+            </div>
         </div>
 
         <div class="terminal-box output-section" id="output-section">
@@ -384,52 +494,89 @@
                 <div class="status-line">Awaiting target URL input...</div>
                 <div class="code-rain" id="output-code"></div>
             </div>
+        </div>
 
-            {% if preview %}
-            <div class="status-line">Target acquired. Extracting metadata...</div>
-            <div class="thumbnail-container">
-                <div class="code-rain" style="position: absolute; top: 0; left: 0; right: 0; opacity: 0.3; z-index: 0;">
-                    {{ code_text|safe }}
+        <div class="terminal-box">
+            <div class="terminal-header">
+                <div class="terminal-dots">
+                    <div class="dot red"></div>
+                    <div class="dot yellow"></div>
+                    <div class="dot green"></div>
                 </div>
-                <img src="{{ preview.thumbnail }}" alt="Video Thumbnail" style="position: relative; z-index: 1;">
+                <div class="terminal-title">SUPPORTED PLATFORMS</div>
             </div>
-            <div class="video-info">
-                <p class="title">:: {{ preview.title }}</p>
-                <p>Duration: {{ preview.duration }}</p>
-                <p>Channel: {{ preview.uploader }}</p>
-                <p>Views: {{ preview.views }}</p>
+            
+            <div class="platform-icons">
+                <span class="platform-icon" title="YouTube">&#128250;</span>
+                <span class="platform-icon" title="TikTok">&#127925;</span>
+                <span class="platform-icon" title="Instagram">&#128247;</span>
+                <span class="platform-icon" title="Twitter/X">&#128038;</span>
+                <span class="platform-icon" title="Facebook">&#128216;</span>
+                <span class="platform-icon" title="Reddit">&#128308;</span>
+                <span class="platform-icon" title="SoundCloud">&#128266;</span>
             </div>
-            <div class="success-line">Metadata extraction complete!</div>
-            <div class="status-line">Select download format:</div>
-            <div class="download-options">
-                <form method="POST" action="/hacker/download" style="display: inline;">
-                    <input type="hidden" name="url" value="{{ url }}">
-                    <input type="hidden" name="format" value="video">
-                    <button type="submit" class="download-btn">[VIDEO]</button>
-                </form>
-                <form method="POST" action="/hacker/download" style="display: inline;">
-                    <input type="hidden" name="url" value="{{ url }}">
-                    <input type="hidden" name="format" value="audio">
-                    <button type="submit" class="download-btn">[AUDIO]</button>
-                </form>
-            </div>
-            {% endif %}
 
-            {% if error %}
-            <div class="error-line">{{ error }}</div>
-            {% endif %}
-
-            {% if success %}
-            <div class="success-line">{{ success }}</div>
-            {% endif %}
+            <div class="features-grid">
+                <div class="feature-card">
+                    <h3>&#127909; Video Download</h3>
+                    <p>Extract videos in multiple quality options from various platforms</p>
+                </div>
+                <div class="feature-card">
+                    <h3>&#127925; Audio Extraction</h3>
+                    <p>Convert and download audio tracks in MP3 format</p>
+                </div>
+                <div class="feature-card">
+                    <h3>&#128200; Metadata Display</h3>
+                    <p>View video information including duration, views, and uploader</p>
+                </div>
+                <div class="feature-card">
+                    <h3>&#128274; Secure Processing</h3>
+                    <p>All downloads are processed securely through our servers</p>
+                </div>
+            </div>
         </div>
 
         <footer>
             LK NEWS Download Bot - Secure Media Extraction
+            <br>
+            <span style="color: #004400;">Static Demo Version - For full functionality use Telegram Bot</span>
         </footer>
     </div>
 
     <script>
+        const correctPassword = '2005';
+        const passwordInput = document.getElementById('password-input');
+        const passwordError = document.getElementById('password-error');
+        const passwordOverlay = document.getElementById('password-overlay');
+        const mainContent = document.getElementById('main-content');
+
+        if (localStorage.getItem('lknews_authenticated') === 'true') {
+            passwordOverlay.style.display = 'none';
+            mainContent.style.display = 'block';
+        }
+
+        passwordInput.addEventListener('input', function() {
+            if (this.value.length === 4) {
+                if (this.value === correctPassword) {
+                    passwordError.style.display = 'none';
+                    localStorage.setItem('lknews_authenticated', 'true');
+                    
+                    passwordOverlay.style.transition = 'opacity 0.5s';
+                    passwordOverlay.style.opacity = '0';
+                    
+                    setTimeout(() => {
+                        passwordOverlay.style.display = 'none';
+                        mainContent.style.display = 'block';
+                    }, 500);
+                } else {
+                    passwordError.style.display = 'block';
+                    this.value = '';
+                    this.classList.add('shake');
+                    setTimeout(() => this.classList.remove('shake'), 500);
+                }
+            }
+        });
+
         const canvas = document.getElementById('matrix-bg');
         const ctx = canvas.getContext('2d');
 
@@ -502,9 +649,9 @@
         document.getElementById('url-input').addEventListener('paste', function(e) {
             setTimeout(() => {
                 const url = this.value;
-                if (url.includes('youtube.com') || url.includes('youtu.be')) {
+                if (url.includes('youtube.com') || url.includes('youtu.be') || url.includes('tiktok.com')) {
                     document.getElementById('output-content').innerHTML = 
-                        '<div class="status-line">YouTube URL detected! Analyzing...</div>' +
+                        '<div class="status-line">URL detected! Analyzing...</div>' +
                         '<div class="loading"><span class="loading-text">PROCESSING...</span></div>';
                 }
             }, 100);
@@ -517,12 +664,63 @@
                 '<div class="code-rain" id="output-code">' + generateCodeRain() + '</div>';
         });
 
-        document.getElementById('url-form').addEventListener('submit', function(e) {
+        document.getElementById('analyze-btn').addEventListener('click', function() {
+            const url = document.getElementById('url-input').value.trim();
+            
+            if (!url) {
+                document.getElementById('output-content').innerHTML = 
+                    '<div class="error-line">No URL provided. Please enter a valid URL.</div>' +
+                    '<div class="code-rain">' + generateCodeRain() + '</div>';
+                return;
+            }
+
             document.getElementById('output-content').innerHTML = 
                 '<div class="status-line">Initiating extraction protocol...</div>' +
                 '<div class="loading"><span class="loading-text">CONNECTING TO SERVER...</span></div>' +
                 '<div class="code-rain">' + generateCodeRain() + '</div>';
+
+            setTimeout(() => {
+                const isValidUrl = url.includes('youtube.com') || url.includes('youtu.be') || 
+                                   url.includes('tiktok.com') || url.includes('instagram.com') ||
+                                   url.includes('twitter.com') || url.includes('facebook.com');
+                
+                if (isValidUrl) {
+                    document.getElementById('output-content').innerHTML = 
+                        '<div class="success-line">Target acquired successfully!</div>' +
+                        '<div class="status-line">Platform: ' + detectPlatform(url) + '</div>' +
+                        '<div class="status-line">This is a static demo. For full download functionality, use our Telegram Bot.</div>' +
+                        '<div class="download-options">' +
+                        '<a href="https://t.me/LKNewsDownloadBot" target="_blank" class="download-btn">[OPEN TELEGRAM BOT]</a>' +
+                        '</div>' +
+                        '<div class="code-rain">' + generateCodeRain() + '</div>';
+                } else {
+                    document.getElementById('output-content').innerHTML = 
+                        '<div class="error-line">Invalid or unsupported URL format.</div>' +
+                        '<div class="status-line">Supported: YouTube, TikTok, Instagram, Twitter, Facebook</div>' +
+                        '<div class="code-rain">' + generateCodeRain() + '</div>';
+                }
+            }, 2000);
         });
+
+        function detectPlatform(url) {
+            if (url.includes('youtube.com') || url.includes('youtu.be')) return 'YouTube';
+            if (url.includes('tiktok.com')) return 'TikTok';
+            if (url.includes('instagram.com')) return 'Instagram';
+            if (url.includes('twitter.com') || url.includes('x.com')) return 'Twitter/X';
+            if (url.includes('facebook.com')) return 'Facebook';
+            return 'Unknown';
+        }
     </script>
+    
+    <style>
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+        .shake {
+            animation: shake 0.3s ease-in-out;
+        }
+    </style>
 </body>
 </html>
