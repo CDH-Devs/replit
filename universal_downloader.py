@@ -12,7 +12,13 @@ from locoloader_scraper import scrape_locoloader, try_direct_scrape
 SUPPORTED_PLATFORMS = [
     'youtube', 'instagram', 'twitter', 'tiktok', 'facebook', 
     'vimeo', 'dailymotion', 'reddit', 'twitch', 'soundcloud',
-    'spotify', 'bandcamp', 'mixcloud', 'bilibili', 'pornhub', 'xhamster', 'xhamster2'
+    'spotify', 'bandcamp', 'mixcloud', 'bilibili', 'kick',
+    'snackvideo', 'likee', 'triller',
+    'apple_music', 'youtube_music', 'amazon_music', 'deezer', 'jiosaavn', 'gaana', 'pandora',
+    'pornhub', 'xhamster', 'xvideos', 'xnxx', 'redtube', 'youporn', 
+    'spankbang', 'tnaflix', 'beeg', 'eporner', 'motherless',
+    'onlyfans', 'fansly', 'patreon',
+    'google_podcasts', 'apple_podcasts', 'anchor'
 ]
 
 SESSION_POOL = requests.Session()
@@ -28,36 +34,55 @@ EXECUTOR = ThreadPoolExecutor(max_workers=4)
 def detect_platform(url):
     """Detect the platform from URL"""
     url_lower = url.lower()
-    if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
-        return 'youtube'
-    elif 'instagram.com' in url_lower:
-        return 'instagram'
-    elif 'xhamster.com' in url_lower or 'xhamster2.com' in url_lower:
-        return 'xhamster'
-    elif 'twitter.com' in url_lower or 'x.com' in url_lower:
-        return 'twitter'
-    elif 'tiktok.com' in url_lower:
-        return 'tiktok'
-    elif 'facebook.com' in url_lower or 'fb.watch' in url_lower or 'fb.com' in url_lower:
-        return 'facebook'
-    elif 'vimeo.com' in url_lower:
-        return 'vimeo'
-    elif 'dailymotion.com' in url_lower:
-        return 'dailymotion'
-    elif 'reddit.com' in url_lower or 'redd.it' in url_lower:
-        return 'reddit'
-    elif 'twitch.tv' in url_lower:
-        return 'twitch'
-    elif 'soundcloud.com' in url_lower:
-        return 'soundcloud'
-    elif 'spotify.com' in url_lower:
-        return 'spotify'
-    elif 'bandcamp.com' in url_lower:
-        return 'bandcamp'
-    elif 'bilibili.com' in url_lower or 'b23.tv' in url_lower:
-        return 'bilibili'
-    elif 'pornhub.com' in url_lower:
-        return 'pornhub'
+    
+    platform_patterns = {
+        'youtube': ['youtube.com', 'youtu.be', 'music.youtube.com'],
+        'instagram': ['instagram.com'],
+        'twitter': ['twitter.com', 'x.com'],
+        'tiktok': ['tiktok.com'],
+        'facebook': ['facebook.com', 'fb.watch', 'fb.com'],
+        'vimeo': ['vimeo.com'],
+        'dailymotion': ['dailymotion.com'],
+        'reddit': ['reddit.com', 'redd.it'],
+        'twitch': ['twitch.tv'],
+        'kick': ['kick.com'],
+        'soundcloud': ['soundcloud.com'],
+        'spotify': ['spotify.com'],
+        'bandcamp': ['bandcamp.com'],
+        'bilibili': ['bilibili.com', 'b23.tv'],
+        'snackvideo': ['snackvideo.com'],
+        'likee': ['likee.video', 'likee.com'],
+        'triller': ['triller.co'],
+        'apple_music': ['music.apple.com'],
+        'amazon_music': ['music.amazon.com'],
+        'deezer': ['deezer.com'],
+        'jiosaavn': ['jiosaavn.com', 'saavn.com'],
+        'gaana': ['gaana.com'],
+        'pandora': ['pandora.com'],
+        'pornhub': ['pornhub.com'],
+        'xhamster': ['xhamster.com', 'xhamster2.com', 'xhamster3.com'],
+        'xvideos': ['xvideos.com'],
+        'xnxx': ['xnxx.com'],
+        'redtube': ['redtube.com'],
+        'youporn': ['youporn.com'],
+        'spankbang': ['spankbang.com'],
+        'tnaflix': ['tnaflix.com'],
+        'beeg': ['beeg.com'],
+        'eporner': ['eporner.com'],
+        'motherless': ['motherless.com'],
+        'onlyfans': ['onlyfans.com'],
+        'fansly': ['fansly.com'],
+        'patreon': ['patreon.com'],
+        'google_podcasts': ['podcasts.google.com'],
+        'apple_podcasts': ['podcasts.apple.com'],
+        'anchor': ['anchor.fm'],
+    }
+    
+    for platform, patterns in platform_patterns.items():
+        for pattern in patterns:
+            if pattern in url_lower:
+                return platform
+    
     return 'unknown'
 
 def get_cached_info(url):
