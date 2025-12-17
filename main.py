@@ -17,6 +17,7 @@ from universal_downloader import (
     download_media, format_duration, format_views, is_supported_url
 )
 from pexels_downloader import process_korean_video, cleanup_files
+from ai_handler import AIBot, search_videos
 
 app = Flask(__name__)
 
@@ -30,7 +31,10 @@ song_query_cache = {}
 download_cache = {}
 youtube_quality_cache = {}
 url_download_cache = {}
+ai_video_cache = {}
 owner_mode = 'owner'
+
+ai_bot = AIBot(handlers, ai_video_cache)
 
 URL_PATTERN = re.compile(
     r'https?://(?:[\w-]+\.)*(?:'
@@ -1033,6 +1037,13 @@ The bot automatically detects and downloads from:
                     threading.Thread(target=do_auto_download).start()
                     return jsonify({"ok": True})
             
+            if text and is_owner:
+                def process_ai_request():
+                    ai_bot.process_message(text, chat_id, message_id, is_owner)
+                
+                threading.Thread(target=process_ai_request).start()
+                return jsonify({"ok": True})
+            
             if text:
                 help_text = """📌 <b>How to use this bot:</b>
 
@@ -1253,6 +1264,51 @@ The bot will automatically detect and download from:
                     process_universal_download(cached_data['url'], handlers, chat_id, status_msg_id, True, format_type, quality)
                 
                 threading.Thread(target=do_owndl_download).start()
+                return jsonify({"ok": True})
+            
+            # AI download callbacks
+            if data.startswith('ai_dl_'):
+                parts = data.split('_')
+                dl_type = parts[2]
+                video_index = int(parts[3])
+                cache_id = '_'.join(parts[4:])
+                
+                if not is_owner:
+                    handlers.answer_callback_query(callback_query['id'], '❌ Owner only')
+                    return jsonify({"ok": True})
+                
+                cached_data = ai_video_cache.get(cache_id)
+                
+                if not cached_data or video_index >= len(cached_data.get('videos', [])):
+                    handlers.answer_callback_query(callback_query['id'], '❌ Request expired')
+                    return jsonify({"ok": True})
+                
+                if time.time() - cached_data.get('timestamp', 0) > 300:
+                    del ai_video_cache[cache_id]
+                    handlers.answer_callback_query(callback_query['id'], '❌ Request expired')
+                    return jsonify({"ok": True})
+                
+                video = cached_data['videos'][video_index]
+                video_url = video.get('content', '')
+                title = video.get('title', 'Video')
+                
+                if cache_id in ai_video_cache:
+                    del ai_video_cache[cache_id]
+                
+                handlers.answer_callback_query(callback_query['id'], f'📥 Starting download...')
+                handlers.delete_message(chat_id, callback_message_id)
+                
+                status_msg_id = handlers.send_message(
+                    chat_id,
+                    html_bold(f'📥 Downloading {dl_type}...') + f'\n\n🎬 {title}',
+                    None
+                )
+                
+                def do_ai_download():
+                    fmt = 'audio' if dl_type == 'audio' else 'video'
+                    process_universal_download(video_url, handlers, chat_id, status_msg_id, True, fmt, 'best')
+                
+                threading.Thread(target=do_ai_download).start()
                 return jsonify({"ok": True})
             
             # Admin callbacks - only for owner
