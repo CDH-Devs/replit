@@ -1266,7 +1266,64 @@ The bot will automatically detect and download from:
                 threading.Thread(target=do_owndl_download).start()
                 return jsonify({"ok": True})
             
-            # AI download callbacks
+            # AI paginated video callbacks (aipv_)
+            if data.startswith('aipv_'):
+                if not is_owner:
+                    handlers.answer_callback_query(callback_query['id'], '❌ Owner only')
+                    return jsonify({"ok": True})
+                
+                result = ai_bot.handle_pagination_callback(data, chat_id, callback_message_id, callback_query['id'])
+                
+                if result and result.get('action') == 'download':
+                    video_url = result['url']
+                    title = result['title']
+                    format_type = result['format']
+                    
+                    handlers.delete_message(chat_id, callback_message_id)
+                    
+                    status_msg_id = handlers.send_message(
+                        chat_id,
+                        html_bold(f'📥 Downloading {format_type}...') + f'\n\n🎬 {title}',
+                        None
+                    )
+                    
+                    def do_paginated_download():
+                        process_universal_download(video_url, handlers, chat_id, status_msg_id, True, format_type, 'best')
+                    
+                    threading.Thread(target=do_paginated_download).start()
+                
+                return jsonify({"ok": True})
+            
+            # AI paginated image callbacks (aipi_)
+            if data.startswith('aipi_'):
+                if not is_owner:
+                    handlers.answer_callback_query(callback_query['id'], '❌ Owner only')
+                    return jsonify({"ok": True})
+                
+                result = ai_bot.handle_image_pagination_callback(data, chat_id, callback_message_id, callback_query['id'])
+                
+                if result and result.get('action') == 'download':
+                    image_url = result['url']
+                    title = result['title']
+                    
+                    def do_image_download():
+                        from ai_handler import download_image
+                        handlers.send_action(chat_id, 'upload_photo')
+                        temp_file = download_image(image_url, 'dl_img')
+                        if temp_file and os.path.exists(temp_file):
+                            handlers.send_photo_file(chat_id, temp_file, f"📷 {title[:100]}", None)
+                            try:
+                                os.unlink(temp_file)
+                            except:
+                                pass
+                        else:
+                            handlers.send_photo_with_caption(chat_id, image_url, f"📷 {title[:100]}", None)
+                    
+                    threading.Thread(target=do_image_download).start()
+                
+                return jsonify({"ok": True})
+            
+            # AI download callbacks (legacy)
             if data.startswith('ai_dl_'):
                 parts = data.split('_')
                 dl_type = parts[2]
