@@ -6,7 +6,7 @@ import tempfile
 import subprocess
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, Response
 from config import BOT_TOKEN, OWNER_ID, PROGRESS_STATES
-from handlers import TelegramHandlers
+from telegram_handlers import TelegramHandlers
 from tiktok_api import download_tiktok_video
 from helpers import format_tiktok_caption, html_bold, strip_html_tags
 from youtube import download_and_send_songs, search_youtube, download_audio, get_video_metadata, is_youtube_url, extract_video_id
