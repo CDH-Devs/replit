@@ -1,468 +1,724 @@
+import re
 import os
-import json
-import asyncio
-import threading
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from pyrogram import Client
-from pyrogram.errors import FloodWait
 import time
-from concurrent.futures import ThreadPoolExecutor
+import tempfile
+import requests
+from duckduckgo_search import DDGS
+from platform_search import search_platform, is_adult_platform, ADULT_PLATFORMS
 
-API_ID = os.environ.get('TELEGRAM_API_ID')
-API_HASH = os.environ.get('TELEGRAM_API_HASH')
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
+PLATFORM_PATTERNS = {
+    'facebook': [r'facebook\s+video', r'fb\s+video', r'facebook', r'fb\s+'],
+    'pornhub': [r'pornhub\s+video', r'pornhub', r'ph\s+video', r'porn\s+hub'],
+    'xhamster': [r'xhamster\s+video', r'xhamster', r'x\s*hamster'],
+    'xvideos': [r'xvideos\s+video', r'xvideos', r'x\s*videos'],
+    'xnxx': [r'xnxx\s+video', r'xnxx'],
+    'redtube': [r'redtube\s+video', r'redtube', r'red\s*tube'],
+    'youporn': [r'youporn\s+video', r'youporn', r'you\s*porn'],
+    'spankbang': [r'spankbang\s+video', r'spankbang', r'spank\s*bang'],
+    'tnaflix': [r'tnaflix\s+video', r'tnaflix'],
+    'beeg': [r'beeg\s+video', r'beeg'],
+    'eporner': [r'eporner\s+video', r'eporner'],
+    'motherless': [r'motherless\s+video', r'motherless'],
+    'youtube': [r'youtube\s+video', r'yt\s+video', r'youtube'],
+    'tiktok': [r'tiktok\s+video', r'tiktok', r'tt\s+video'],
+    'instagram': [r'instagram\s+video', r'insta\s+video', r'instagram', r'ig\s+'],
+    'twitter': [r'twitter\s+video', r'x\s+video', r'twitter', r'tweet'],
+    'reddit': [r'reddit\s+video', r'reddit'],
+    'vimeo': [r'vimeo\s+video', r'vimeo'],
+    'dailymotion': [r'dailymotion\s+video', r'dailymotion'],
+    'twitch': [r'twitch\s+video', r'twitch', r'twitch\s+stream'],
+    'kick': [r'kick\s+video', r'kick\s+stream', r'kick'],
+    'soundcloud': [r'soundcloud\s+', r'soundcloud'],
+    'spotify': [r'spotify\s+', r'spotify'],
+    'snackvideo': [r'snackvideo', r'snack\s*video'],
+    'likee': [r'likee\s+video', r'likee'],
+    'triller': [r'triller\s+video', r'triller'],
+}
 
-USER_IDS_FILE = 'user_ids.json'
+INTENT_PATTERNS = {
+    'download_video': [
+        r'download\s+(?:a\s+)?video',
+        r'get\s+(?:me\s+)?(?:a\s+)?video',
+        r'find\s+(?:me\s+)?(?:a\s+)?video',
+        r'video\s+(?:of|about|for)',
+        r'(?:need|want)\s+(?:a\s+)?video',
+        r'search\s+video',
+        r'show\s+(?:me\s+)?video',
+    ],
+    'download_audio': [
+        r'download\s+(?:a\s+)?(?:song|audio|music|mp3)',
+        r'get\s+(?:me\s+)?(?:a\s+)?(?:song|audio|music)',
+        r'find\s+(?:me\s+)?(?:a\s+)?(?:song|audio|music)',
+        r'play\s+(?:a\s+)?(?:song|music)',
+        r'(?:need|want)\s+(?:a\s+)?(?:song|audio|music)',
+        r'music\s+(?:of|by|from)',
+    ],
+    'search_photo': [
+        r'(?:search|find|get|show)\s+(?:me\s+)?(?:a\s+)?(?:photo|image|picture|pic)',
+        r'(?:photo|image|picture|pic)\s+(?:of|about|for)',
+        r'(?:need|want)\s+(?:a\s+)?(?:photo|image|picture)',
+        r'show\s+(?:me\s+)?(?:photo|image|picture)',
+    ],
+    'search_news': [
+        r'(?:latest|recent|new|today|to\s*day)\s+(?:\w+\s+)?news',
+        r'news\s+(?:about|on|for|today)',
+        r'what\'?s\s+happening',
+        r'current\s+events',
+        r'breaking\s+news',
+        r'(?:sri\s*lanka|sinhala|tamil)\s+news',
+    ],
+    'search_web': [
+        r'search\s+(?:for|about)?',
+        r'(?:what|who|where|when|why|how)\s+(?:is|are|was|were|do|does|did)',
+        r'tell\s+me\s+about',
+        r'find\s+(?:me\s+)?(?:info|information)',
+        r'look\s+up',
+    ],
+    'create_link': [
+        r'create\s+(?:a\s+)?link',
+        r'make\s+(?:a\s+)?link',
+        r'generate\s+(?:a\s+)?link',
+        r'shorten\s+(?:this\s+)?(?:url|link)',
+    ],
+}
 
-TELEGRAM_SESSION = requests.Session()
-retry_strategy = Retry(total=3, backoff_factor=0.1, status_forcelist=[500, 502, 503, 504])
-adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=20)
-TELEGRAM_SESSION.mount("https://", adapter)
-TELEGRAM_SESSION.mount("http://", adapter)
+def detect_platform(text):
+    text_lower = text.lower().strip()
+    for platform, patterns in PLATFORM_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, text_lower):
+                return platform
+    return None
 
-HANDLER_EXECUTOR = ThreadPoolExecutor(max_workers=6)
-
-
-class TelegramHandlers:
-    def __init__(self, bot_token, owner_id):
-        self.bot_token = bot_token
-        self.owner_id = owner_id
-        self.api_url = f"https://api.telegram.org/bot{bot_token}"
-        self.progress_active = {}
-        self.video_audio_cache = {}
-        self.session = TELEGRAM_SESSION
+def detect_intent(text):
+    text_lower = text.lower().strip()
     
-    def _make_request(self, method, data=None, files=None):
-        url = f"{self.api_url}/{method}"
-        try:
-            if files:
-                response = self.session.post(url, data=data, files=files, timeout=300)
-            else:
-                response = self.session.post(url, json=data, timeout=30)
-            return response.json()
-        except Exception as e:
-            print(f"[Telegram API] Error in {method}: {e}")
-            return {'ok': False, 'error': str(e)}
-    
-    def send_message(self, chat_id, text, reply_to_message_id=None, keyboard=None):
-        data = {
-            'chat_id': chat_id,
-            'text': text,
-            'parse_mode': 'HTML'
+    platform = detect_platform(text_lower)
+    if platform:
+        query = extract_platform_query(text_lower, platform)
+        return {
+            'intent': 'platform_video_search',
+            'platform': platform,
+            'query': query,
+            'confidence': 0.9
         }
-        if reply_to_message_id:
-            data['reply_to_message_id'] = reply_to_message_id
-        if keyboard:
-            data['reply_markup'] = {'inline_keyboard': keyboard}
-        result = self._make_request('sendMessage', data)
-        if result.get('ok'):
-            return result['result']['message_id']
+    
+    for intent, patterns in INTENT_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, text_lower):
+                query = extract_query(text_lower, pattern)
+                return {'intent': intent, 'query': query, 'confidence': 0.8}
+    
+    if any(word in text_lower for word in ['video', 'youtube', 'watch', 'clip']):
+        return {'intent': 'download_video', 'query': text, 'confidence': 0.6}
+    if any(word in text_lower for word in ['song', 'music', 'audio', 'mp3']):
+        return {'intent': 'download_audio', 'query': text, 'confidence': 0.6}
+    if any(word in text_lower for word in ['photo', 'image', 'picture', 'pic']):
+        return {'intent': 'search_photo', 'query': text, 'confidence': 0.6}
+    if any(word in text_lower for word in ['news', 'happening', 'today']):
+        return {'intent': 'search_news', 'query': text, 'confidence': 0.6}
+    
+    return {'intent': 'search_web', 'query': text, 'confidence': 0.5}
+
+def extract_platform_query(text, platform):
+    for pattern in PLATFORM_PATTERNS.get(platform, []):
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE).strip()
+    text = re.sub(r'^(for|about|of|a|an|the|me|video|videos)\s+', '', text).strip()
+    text = re.sub(r'\s+(video|videos)$', '', text).strip()
+    return text if text else platform
+
+def extract_query(text, matched_pattern):
+    cleaned = re.sub(matched_pattern, '', text, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r'^(for|about|of|a|an|the|me)\s+', '', cleaned).strip()
+    return cleaned if cleaned else text
+
+def search_web(query, max_results=5):
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+            return {
+                'success': True,
+                'results': results,
+                'query': query
+            }
+    except Exception as e:
+        return {'success': False, 'error': str(e), 'query': query}
+
+def search_images(query, max_results=5):
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.images(query, max_results=max_results))
+            return {
+                'success': True,
+                'images': results,
+                'query': query
+            }
+    except Exception as e:
+        return {'success': False, 'error': str(e), 'query': query}
+
+def search_videos(query, max_results=10):
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.videos(query, max_results=max_results))
+            return {
+                'success': True,
+                'videos': results,
+                'query': query
+            }
+    except Exception as e:
+        return {'success': False, 'error': str(e), 'query': query}
+
+def search_platform_videos(platform, query, max_results=10):
+    if is_adult_platform(platform):
+        print(f"[AI Handler] Using platform-specific search for {platform}")
+        return search_platform(platform, query, max_results)
+    
+    site_map = {
+        'facebook': 'site:facebook.com video',
+        'youtube': 'site:youtube.com',
+        'tiktok': 'site:tiktok.com',
+        'instagram': 'site:instagram.com',
+        'twitter': 'site:twitter.com OR site:x.com',
+        'reddit': 'site:reddit.com video',
+        'vimeo': 'site:vimeo.com',
+        'dailymotion': 'site:dailymotion.com',
+        'twitch': 'site:twitch.tv',
+        'kick': 'site:kick.com',
+        'soundcloud': 'site:soundcloud.com',
+        'spotify': 'site:spotify.com',
+        'snackvideo': 'site:snackvideo.com',
+        'likee': 'site:likee.video',
+        'triller': 'site:triller.co',
+    }
+    
+    site_filter = site_map.get(platform, '')
+    full_query = f"{query} {site_filter}".strip()
+    
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.videos(full_query, max_results=max_results))
+            
+            if results:
+                return {
+                    'success': True,
+                    'videos': results,
+                    'query': query,
+                    'platform': platform
+                }
+            
+            results = list(ddgs.videos(query, max_results=max_results))
+            return {
+                'success': True,
+                'videos': results,
+                'query': query,
+                'platform': platform
+            }
+    except Exception as e:
+        return {'success': False, 'error': str(e), 'query': query, 'platform': platform}
+
+def search_news(query, max_results=10):
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.news(query, max_results=max_results))
+            return {
+                'success': True,
+                'news': results,
+                'query': query
+            }
+    except Exception as e:
+        return {'success': False, 'error': str(e), 'query': query}
+
+def download_image(url, prefix="img"):
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=30, stream=True)
+        response.raise_for_status()
+        
+        ext = '.jpg'
+        content_type = response.headers.get('content-type', '')
+        if 'png' in content_type:
+            ext = '.png'
+        elif 'gif' in content_type:
+            ext = '.gif'
+        elif 'webp' in content_type:
+            ext = '.webp'
+        
+        temp_file = os.path.join(tempfile.gettempdir(), f"{prefix}_{int(time.time())}{ext}")
+        with open(temp_file, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        return temp_file
+    except Exception as e:
+        print(f"[AI Handler] Failed to download image: {e}")
+        return None
+
+def format_web_results(results):
+    if not results.get('success') or not results.get('results'):
+        return "No results found."
+    
+    formatted = []
+    for i, r in enumerate(results['results'][:5], 1):
+        title = r.get('title', 'No title')
+        body = r.get('body', '')[:150]
+        href = r.get('href', '')
+        formatted.append(f"{i}. <b>{title}</b>\n{body}...\n<a href='{href}'>Read more</a>")
+    
+    return "\n\n".join(formatted)
+
+def format_video_results(results):
+    if not results.get('success') or not results.get('videos'):
+        return None, "No videos found."
+    
+    formatted = []
+    videos = results['videos'][:5]
+    for i, v in enumerate(videos, 1):
+        title = v.get('title', 'No title')
+        duration = v.get('duration', 'Unknown')
+        publisher = v.get('publisher', 'Unknown')
+        url = v.get('content', '')
+        formatted.append(f"{i}. <b>{title}</b>\n⏱ {duration} | 📺 {publisher}\n<a href='{url}'>Watch</a>")
+    
+    return videos, "\n\n".join(formatted)
+
+def format_image_results(results):
+    if not results.get('success') or not results.get('images'):
+        return None, "No images found."
+    
+    images = results['images'][:5]
+    return images, f"Found {len(images)} images"
+
+def format_news_results(results):
+    if not results.get('success') or not results.get('news'):
+        return "No news found."
+    
+    formatted = []
+    for i, n in enumerate(results['news'][:10], 1):
+        title = n.get('title', 'No title')
+        body = n.get('body', '')[:100]
+        source = n.get('source', 'Unknown')
+        url = n.get('url', '')
+        date = n.get('date', '')
+        formatted.append(f"{i}. <b>{title}</b>\n📰 {source} | {date}\n{body}...\n<a href='{url}'>Read more</a>")
+    
+    return "\n\n".join(formatted)
+
+
+class AIBot:
+    
+    def __init__(self, handlers, video_cache=None):
+        self.handlers = handlers
+        self.video_cache = video_cache if video_cache is not None else {}
+        self.paginated_cache = {}
+    
+    def process_message(self, text, chat_id, message_id, is_owner):
+        intent_result = detect_intent(text)
+        intent = intent_result['intent']
+        query = intent_result['query']
+        platform = intent_result.get('platform')
+        
+        print(f"[AI Bot] Detected intent: {intent}, query: {query}, platform: {platform}")
+        
+        if intent == 'platform_video_search':
+            return self.handle_platform_video_search(platform, query, chat_id, message_id)
+        elif intent == 'download_video':
+            return self.handle_video_request(query, chat_id, message_id)
+        elif intent == 'download_audio':
+            return self.handle_audio_request(query, chat_id, message_id)
+        elif intent == 'search_photo':
+            return self.handle_photo_request(query, chat_id, message_id)
+        elif intent == 'search_news':
+            return self.handle_news_request(query, chat_id, message_id)
+        elif intent == 'create_link':
+            return self.handle_link_request(query, chat_id, message_id)
+        else:
+            return self.handle_web_search(query, chat_id, message_id)
+    
+    def handle_platform_video_search(self, platform, query, chat_id, message_id):
+        self.handlers.send_action(chat_id, 'typing')
+        
+        platform_emoji = {
+            'pornhub': '🔞', 'xhamster': '🔞', 'xvideos': '🔞', 'xnxx': '🔞',
+            'redtube': '🔞', 'youporn': '🔞', 'spankbang': '🔞', 'tnaflix': '🔞',
+            'beeg': '🔞', 'eporner': '🔞', 'motherless': '🔞',
+            'facebook': '📘', 'youtube': '📺', 'tiktok': '🎵', 'instagram': '📷',
+            'twitter': '🐦', 'reddit': '🔴', 'vimeo': '🎬', 'dailymotion': '📹',
+            'twitch': '💜', 'kick': '💚', 'soundcloud': '🔊', 'spotify': '🎧',
+            'snackvideo': '🍿', 'likee': '❤️', 'triller': '🎤'
+        }
+        emoji = platform_emoji.get(platform, '🎬')
+        
+        status_msg = self.handlers.send_message(
+            chat_id, 
+            f'<b>{emoji} Searching {platform.capitalize()} videos...</b>\n\n🔍 Query: {query}', 
+            message_id
+        )
+        
+        results = search_platform_videos(platform, query, max_results=10)
+        
+        if not results.get('success') or not results.get('videos'):
+            self.handlers.edit_message(
+                chat_id, status_msg, 
+                f'<b>❌ No {platform.capitalize()} videos found for:</b> {query}'
+            )
+            return None
+        
+        videos = results['videos'][:10]
+        
+        cache_id = f"pv_{chat_id}_{int(time.time() * 1000)}"
+        self.paginated_cache[cache_id] = {
+            'videos': videos,
+            'platform': platform,
+            'query': query,
+            'current_index': 0,
+            'timestamp': time.time()
+        }
+        
+        self.handlers.delete_message(chat_id, status_msg)
+        self._send_video_page(chat_id, cache_id, 0, message_id)
+        
+        return {'videos': videos, 'cache_id': cache_id, 'platform': platform}
+    
+    def _send_video_page(self, chat_id, cache_id, index, reply_to=None):
+        cached = self.paginated_cache.get(cache_id)
+        if not cached:
+            return
+        
+        videos = cached['videos']
+        platform = cached['platform']
+        
+        if index < 0 or index >= len(videos):
+            return
+        
+        video = videos[index]
+        total = len(videos)
+        
+        title = video.get('title', 'Unknown')[:100]
+        duration = video.get('duration', 'Unknown')
+        publisher = video.get('publisher', 'Unknown')
+        thumbnail = video.get('images', {}).get('large') or video.get('images', {}).get('medium') or video.get('images', {}).get('small')
+        video_url = video.get('content', '')
+        
+        platform_emoji = {
+            'pornhub': '🔞', 'xhamster': '🔞', 'xvideos': '🔞', 'xnxx': '🔞',
+            'redtube': '🔞', 'youporn': '🔞', 'spankbang': '🔞', 'tnaflix': '🔞',
+            'beeg': '🔞', 'eporner': '🔞', 'motherless': '🔞',
+            'facebook': '📘', 'youtube': '📺', 'tiktok': '🎵', 'instagram': '📷',
+            'twitter': '🐦', 'reddit': '🔴', 'vimeo': '🎬', 'dailymotion': '📹',
+            'twitch': '💜', 'kick': '💚', 'soundcloud': '🔊', 'spotify': '🎧',
+            'snackvideo': '🍿', 'likee': '❤️', 'triller': '🎤'
+        }
+        emoji = platform_emoji.get(platform, '🎬')
+        
+        caption = (
+            f"{emoji} <b>{platform.capitalize()} Video</b> ({index + 1}/{total})\n\n"
+            f"🎬 <b>{title}</b>\n"
+            f"⏱ <b>Duration:</b> {duration}\n"
+            f"📺 <b>Publisher:</b> {publisher}\n\n"
+            f"🔗 <a href='{video_url}'>Open Link</a>"
+        )
+        
+        keyboard = []
+        
+        quality_row = [
+            {"text": "🎬 Video (Best)", "callback_data": f"aipv_video_best_{index}_{cache_id}"},
+            {"text": "🎵 Audio", "callback_data": f"aipv_audio_best_{index}_{cache_id}"}
+        ]
+        keyboard.append(quality_row)
+        
+        nav_row = []
+        if index > 0:
+            nav_row.append({"text": "⬅️ Previous", "callback_data": f"aipv_prev_{index}_{cache_id}"})
+        if index < total - 1:
+            nav_row.append({"text": "Next ➡️", "callback_data": f"aipv_next_{index}_{cache_id}"})
+        if nav_row:
+            keyboard.append(nav_row)
+        
+        keyboard.append([{"text": "LK NEWS Download Bot", "callback_data": "ignore_branding"}])
+        
+        if thumbnail:
+            self.handlers.send_photo_with_caption(chat_id, thumbnail, caption, reply_to, keyboard)
+        else:
+            self.handlers.send_message(chat_id, caption, reply_to, keyboard)
+    
+    def handle_pagination_callback(self, data, chat_id, callback_message_id, callback_query_id):
+        parts = data.split('_')
+        action = parts[1]
+        
+        if action in ['video', 'audio']:
+            format_type = action
+            quality = parts[2]
+            video_index = int(parts[3])
+            cache_id = '_'.join(parts[4:])
+            
+            cached = self.paginated_cache.get(cache_id)
+            if not cached:
+                self.handlers.answer_callback_query(callback_query_id, '❌ Request expired')
+                return None
+            
+            if time.time() - cached.get('timestamp', 0) > 600:
+                del self.paginated_cache[cache_id]
+                self.handlers.answer_callback_query(callback_query_id, '❌ Request expired')
+                return None
+            
+            if video_index >= len(cached['videos']):
+                self.handlers.answer_callback_query(callback_query_id, '❌ Request expired')
+                return None
+            
+            video = cached['videos'][video_index]
+            video_url = video.get('content', '')
+            title = video.get('title', 'Video')
+            
+            self.handlers.answer_callback_query(callback_query_id, f'📥 Starting {format_type} download...')
+            
+            return {
+                'action': 'download',
+                'format': format_type,
+                'quality': quality,
+                'url': video_url,
+                'title': title,
+                'cache_id': cache_id,
+                'video_index': video_index
+            }
+        
+        current_index = int(parts[2])
+        cache_id = '_'.join(parts[3:])
+        
+        cached = self.paginated_cache.get(cache_id)
+        if not cached:
+            self.handlers.answer_callback_query(callback_query_id, '❌ Request expired')
+            return None
+        
+        if time.time() - cached.get('timestamp', 0) > 600:
+            del self.paginated_cache[cache_id]
+            self.handlers.answer_callback_query(callback_query_id, '❌ Request expired')
+            return None
+        
+        if action == 'prev':
+            new_index = max(0, current_index - 1)
+            self.handlers.answer_callback_query(callback_query_id, f'Video {new_index + 1}/{len(cached["videos"])}')
+            self.handlers.delete_message(chat_id, callback_message_id)
+            self._send_video_page(chat_id, cache_id, new_index)
+            return {'action': 'navigate', 'index': new_index}
+        
+        elif action == 'next':
+            new_index = min(len(cached['videos']) - 1, current_index + 1)
+            self.handlers.answer_callback_query(callback_query_id, f'Video {new_index + 1}/{len(cached["videos"])}')
+            self.handlers.delete_message(chat_id, callback_message_id)
+            self._send_video_page(chat_id, cache_id, new_index)
+            return {'action': 'navigate', 'index': new_index}
+        
         return None
     
-    def edit_message(self, chat_id, message_id, text, keyboard=None):
-        data = {
-            'chat_id': chat_id,
-            'message_id': message_id,
-            'text': text,
-            'parse_mode': 'HTML'
-        }
-        if keyboard:
-            data['reply_markup'] = {'inline_keyboard': keyboard}
-        return self._make_request('editMessageText', data)
-    
-    def delete_message(self, chat_id, message_id):
-        return self._make_request('deleteMessage', {
-            'chat_id': chat_id,
-            'message_id': message_id
-        })
-    
-    def send_action(self, chat_id, action):
-        return self._make_request('sendChatAction', {
-            'chat_id': chat_id,
-            'action': action
-        })
-    
-    def answer_callback_query(self, callback_query_id, text=None, show_alert=False):
-        data = {'callback_query_id': callback_query_id}
-        if text:
-            data['text'] = text
-        data['show_alert'] = show_alert
-        return self._make_request('answerCallbackQuery', data)
-    
-    def send_photo_with_caption(self, chat_id, photo_url, caption, reply_to_message_id=None, keyboard=None):
-        data = {
-            'chat_id': chat_id,
-            'photo': photo_url,
-            'caption': caption,
-            'parse_mode': 'HTML'
-        }
-        if reply_to_message_id:
-            data['reply_to_message_id'] = reply_to_message_id
-        if keyboard:
-            data['reply_markup'] = {'inline_keyboard': keyboard}
-        return self._make_request('sendPhoto', data)
-    
-    def send_photo_file(self, chat_id, file_path, caption, reply_to_message_id=None, keyboard=None):
-        data = {
-            'chat_id': chat_id,
-            'caption': caption,
-            'parse_mode': 'HTML'
-        }
-        if reply_to_message_id:
-            data['reply_to_message_id'] = reply_to_message_id
-        if keyboard:
-            data['reply_markup'] = json.dumps({'inline_keyboard': keyboard})
+    def handle_video_request(self, query, chat_id, message_id):
+        self.handlers.send_action(chat_id, 'typing')
+        status_msg = self.handlers.send_message(chat_id, '<b>🔍 Searching for videos...</b>', message_id)
         
-        with open(file_path, 'rb') as f:
-            return self._make_request('sendPhoto', data, files={'photo': f})
-    
-    def send_photos(self, chat_id, photos, caption, reply_to_message_id=None, keyboard=None):
-        if len(photos) == 1:
-            return self.send_photo_with_caption(chat_id, photos[0], caption, reply_to_message_id, keyboard)
+        results = search_videos(query, max_results=10)
         
-        media = []
-        for i, photo in enumerate(photos[:10]):
-            item = {'type': 'photo', 'media': photo}
-            if i == 0:
-                item['caption'] = caption
-                item['parse_mode'] = 'HTML'
-            media.append(item)
+        if not results.get('success') or not results.get('videos'):
+            self.handlers.edit_message(chat_id, status_msg, f"<b>❌ No videos found for:</b> {query}")
+            return None
         
-        data = {'chat_id': chat_id, 'media': media}
-        if reply_to_message_id:
-            data['reply_to_message_id'] = reply_to_message_id
-        return self._make_request('sendMediaGroup', data)
-    
-    def send_video(self, chat_id, video_url, caption, reply_to_message_id=None, thumbnail=None, keyboard=None):
-        data = {
-            'chat_id': chat_id,
-            'video': video_url,
-            'caption': caption,
-            'parse_mode': 'HTML',
-            'supports_streaming': True
+        videos = results['videos'][:10]
+        
+        cache_id = f"pv_{chat_id}_{int(time.time() * 1000)}"
+        self.paginated_cache[cache_id] = {
+            'videos': videos,
+            'platform': 'general',
+            'query': query,
+            'current_index': 0,
+            'timestamp': time.time()
         }
-        if reply_to_message_id:
-            data['reply_to_message_id'] = reply_to_message_id
+        
+        self.handlers.delete_message(chat_id, status_msg)
+        self._send_video_page(chat_id, cache_id, 0, message_id)
+        
+        return {'videos': videos, 'cache_id': cache_id}
+    
+    def handle_audio_request(self, query, chat_id, message_id):
+        self.handlers.send_action(chat_id, 'typing')
+        status_msg = self.handlers.send_message(chat_id, '<b>🔍 Searching for music...</b>', message_id)
+        
+        results = search_videos(f"{query} audio music", max_results=10)
+        
+        if not results.get('success') or not results.get('videos'):
+            self.handlers.edit_message(chat_id, status_msg, f"<b>❌ No music found for:</b> {query}")
+            return None
+        
+        videos = results['videos'][:10]
+        
+        cache_id = f"pa_{chat_id}_{int(time.time() * 1000)}"
+        self.paginated_cache[cache_id] = {
+            'videos': videos,
+            'platform': 'music',
+            'query': query,
+            'current_index': 0,
+            'timestamp': time.time()
+        }
+        
+        self.handlers.delete_message(chat_id, status_msg)
+        self._send_video_page(chat_id, cache_id, 0, message_id)
+        
+        return {'videos': videos, 'cache_id': cache_id}
+    
+    def handle_photo_request(self, query, chat_id, message_id):
+        self.handlers.send_action(chat_id, 'typing')
+        status_msg = self.handlers.send_message(chat_id, '<b>🔍 Searching for images...</b>', message_id)
+        
+        results = search_images(query, max_results=10)
+        
+        if not results.get('success') or not results.get('images'):
+            self.handlers.edit_message(chat_id, status_msg, f"<b>❌ No images found for:</b> {query}")
+            return None
+        
+        images = results['images'][:10]
+        
+        cache_id = f"pi_{chat_id}_{int(time.time() * 1000)}"
+        self.paginated_cache[cache_id] = {
+            'images': images,
+            'query': query,
+            'current_index': 0,
+            'timestamp': time.time()
+        }
+        
+        self.handlers.delete_message(chat_id, status_msg)
+        self._send_image_page(chat_id, cache_id, 0, message_id)
+        
+        return {'images': images, 'cache_id': cache_id}
+    
+    def _send_image_page(self, chat_id, cache_id, index, reply_to=None):
+        cached = self.paginated_cache.get(cache_id)
+        if not cached:
+            return
+        
+        images = cached['images']
+        if index < 0 or index >= len(images):
+            return
+        
+        image = images[index]
+        total = len(images)
+        
+        title = image.get('title', 'Image')[:100]
+        source = image.get('source', 'Unknown')
+        image_url = image.get('image', '')
+        thumbnail = image.get('thumbnail', image_url)
+        
+        caption = (
+            f"📷 <b>Image</b> ({index + 1}/{total})\n\n"
+            f"🖼 <b>{title}</b>\n"
+            f"📰 <b>Source:</b> {source}"
+        )
+        
+        keyboard = []
+        
+        keyboard.append([{"text": "📥 Download Full Image", "callback_data": f"aipi_dl_{index}_{cache_id}"}])
+        
+        nav_row = []
+        if index > 0:
+            nav_row.append({"text": "⬅️ Previous", "callback_data": f"aipi_prev_{index}_{cache_id}"})
+        if index < total - 1:
+            nav_row.append({"text": "Next ➡️", "callback_data": f"aipi_next_{index}_{cache_id}"})
+        if nav_row:
+            keyboard.append(nav_row)
+        
+        keyboard.append([{"text": "LK NEWS Download Bot", "callback_data": "ignore_branding"}])
+        
         if thumbnail:
-            data['thumbnail'] = thumbnail
-        if keyboard:
-            data['reply_markup'] = {'inline_keyboard': keyboard}
-        return self._make_request('sendVideo', data)
+            self.handlers.send_photo_with_caption(chat_id, thumbnail, caption, reply_to, keyboard)
+        else:
+            self.handlers.send_message(chat_id, caption, reply_to, keyboard)
     
-    def send_video_with_quality_fallback(self, chat_id, hd_url, sd_url, caption, reply_to_message_id=None, thumbnail=None, keyboard=None):
-        result = self.send_video(chat_id, hd_url, caption, reply_to_message_id, thumbnail, keyboard)
-        if not result.get('ok'):
-            result = self.send_video(chat_id, sd_url, caption, reply_to_message_id, thumbnail, keyboard)
-        return result
-    
-    def send_video_file(self, chat_id, file_path, caption, reply_to_message_id=None, keyboard=None):
-        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+    def handle_image_pagination_callback(self, data, chat_id, callback_message_id, callback_query_id):
+        parts = data.split('_')
+        action = parts[1]
         
-        # Always use MTProto for video uploads - it's much faster
-        if mtproto_client.is_available() and file_size > 5 * 1024 * 1024:
-            result = mtproto_client.send_video(chat_id, file_path, caption, reply_to_message_id)
-            if result.get('ok'):
-                return result
+        if action == 'dl':
+            image_index = int(parts[2])
+            cache_id = '_'.join(parts[3:])
+            
+            cached = self.paginated_cache.get(cache_id)
+            if not cached:
+                self.handlers.answer_callback_query(callback_query_id, '❌ Request expired')
+                return None
+            
+            if image_index >= len(cached.get('images', [])):
+                self.handlers.answer_callback_query(callback_query_id, '❌ Request expired')
+                return None
+            
+            image = cached['images'][image_index]
+            image_url = image.get('image', '')
+            title = image.get('title', 'Image')
+            
+            self.handlers.answer_callback_query(callback_query_id, '📥 Downloading image...')
+            
+            return {
+                'action': 'download',
+                'url': image_url,
+                'title': title
+            }
         
-        data = {
-            'chat_id': chat_id,
-            'caption': caption,
-            'parse_mode': 'HTML',
-            'supports_streaming': 'true'
-        }
-        if reply_to_message_id:
-            data['reply_to_message_id'] = reply_to_message_id
-        if keyboard:
-            data['reply_markup'] = json.dumps({'inline_keyboard': keyboard})
+        current_index = int(parts[2])
+        cache_id = '_'.join(parts[3:])
         
-        with open(file_path, 'rb') as f:
-            return self._make_request('sendVideo', data, files={'video': f})
-    
-    def send_audio_file(self, chat_id, file_path, title, reply_to_message_id=None, keyboard=None):
-        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+        cached = self.paginated_cache.get(cache_id)
+        if not cached:
+            self.handlers.answer_callback_query(callback_query_id, '❌ Request expired')
+            return None
         
-        # Use MTProto for audio uploads over 5MB - it's faster
-        if mtproto_client.is_available() and file_size > 5 * 1024 * 1024:
-            result = mtproto_client.send_audio(chat_id, file_path, title, None, reply_to_message_id)
-            if result.get('ok'):
-                return result
+        if action == 'prev':
+            new_index = max(0, current_index - 1)
+            self.handlers.answer_callback_query(callback_query_id, f'Image {new_index + 1}/{len(cached["images"])}')
+            self.handlers.delete_message(chat_id, callback_message_id)
+            self._send_image_page(chat_id, cache_id, new_index)
+            return {'action': 'navigate', 'index': new_index}
         
-        data = {
-            'chat_id': chat_id,
-            'title': title,
-            'parse_mode': 'HTML'
-        }
-        if reply_to_message_id:
-            data['reply_to_message_id'] = reply_to_message_id
-        if keyboard:
-            data['reply_markup'] = json.dumps({'inline_keyboard': keyboard})
+        elif action == 'next':
+            new_index = min(len(cached['images']) - 1, current_index + 1)
+            self.handlers.answer_callback_query(callback_query_id, f'Image {new_index + 1}/{len(cached["images"])}')
+            self.handlers.delete_message(chat_id, callback_message_id)
+            self._send_image_page(chat_id, cache_id, new_index)
+            return {'action': 'navigate', 'index': new_index}
         
-        with open(file_path, 'rb') as f:
-            return self._make_request('sendAudio', data, files={'audio': f})
+        return None
     
-    def send_link_message(self, chat_id, text, keyboard=None, reply_to_message_id=None):
-        return self.send_message(chat_id, text, reply_to_message_id, keyboard)
-    
-    def save_user_id(self, user_id):
-        try:
-            user_ids = set()
-            if os.path.exists(USER_IDS_FILE):
-                with open(USER_IDS_FILE, 'r') as f:
-                    user_ids = set(json.load(f))
-            user_ids.add(user_id)
-            with open(USER_IDS_FILE, 'w') as f:
-                json.dump(list(user_ids), f)
-        except Exception as e:
-            print(f"[Handlers] Error saving user ID: {e}")
-    
-    def get_all_users_count(self):
-        try:
-            if os.path.exists(USER_IDS_FILE):
-                with open(USER_IDS_FILE, 'r') as f:
-                    return len(json.load(f))
-        except:
-            pass
-        return 0
-    
-    def broadcast_message(self, from_chat_id, message_id):
-        results = {'successful_sends': 0, 'failed_sends': 0}
-        try:
-            if os.path.exists(USER_IDS_FILE):
-                with open(USER_IDS_FILE, 'r') as f:
-                    user_ids = json.load(f)
-                
-                for user_id in user_ids:
-                    try:
-                        self._make_request('copyMessage', {
-                            'chat_id': user_id,
-                            'from_chat_id': from_chat_id,
-                            'message_id': message_id
-                        })
-                        results['successful_sends'] += 1
-                        time.sleep(0.05)
-                    except:
-                        results['failed_sends'] += 1
-        except Exception as e:
-            print(f"[Broadcast] Error: {e}")
+    def handle_news_request(self, query, chat_id, message_id):
+        self.handlers.send_action(chat_id, 'typing')
+        status_msg = self.handlers.send_message(chat_id, '<b>🔍 Searching for news...</b>', message_id)
+        
+        results = search_news(query, max_results=10)
+        formatted = format_news_results(results)
+        
+        self.handlers.edit_message(chat_id, status_msg, f"<b>📰 News for:</b> {query}\n\n{formatted}")
         return results
     
-    def cache_video_for_audio(self, key, video_url, caption):
-        self.video_audio_cache[key] = {'video_url': video_url, 'caption': caption}
-    
-    def get_video_for_audio(self, key):
-        return self.video_audio_cache.get(key)
-    
-    def clear_video_for_audio(self, key):
-        self.video_audio_cache.pop(key, None)
-    
-    def simulate_progress(self, chat_id, message_id, states, interval=0.5):
-        key = f"{chat_id}_{message_id}"
-        self.progress_active[key] = True
+    def handle_link_request(self, query, chat_id, message_id):
+        self.handlers.send_action(chat_id, 'typing')
         
-        def run_progress():
-            for state in states:
-                if not self.progress_active.get(key):
-                    break
-                self.edit_message(chat_id, message_id, state['text'])
-                time.sleep(interval)
-            self.progress_active.pop(key, None)
-        
-        threading.Thread(target=run_progress, daemon=True).start()
-
-class MTProtoClient:
-    _instance = None
-    _lock = threading.Lock()
-    
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._do_init()
-        return cls._instance
-    
-    def _do_init(self):
-        self.client = None
-        self.loop = None
-        self.thread = None
-        self._started = False
-        self._loop_ready = threading.Event()
-        self._start_lock = threading.Lock()
-        self._client_ready = threading.Event()
-    
-    def __init__(self):
-        pass
-    
-    def _run_loop(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self._loop_ready.set()
-        self.loop.run_forever()
-    
-    def _ensure_loop(self):
-        if self.loop is None or not self.loop.is_running():
-            if self.thread is None or not self.thread.is_alive():
-                self._loop_ready.clear()
-                self.thread = threading.Thread(target=self._run_loop, daemon=True)
-                self.thread.start()
-                if not self._loop_ready.wait(timeout=10):
-                    raise Exception("Event loop failed to start")
-        return self.loop
-    
-    def start(self):
-        with self._start_lock:
-            if self._started:
-                return True
+        results = search_web(query)
+        if results.get('success') and results.get('results'):
+            first_result = results['results'][0]
+            link = first_result.get('href', '')
+            title = first_result.get('title', 'Link')
             
-            if not API_ID or not API_HASH or not BOT_TOKEN:
-                print("[MTProto] Missing API credentials (TELEGRAM_API_ID, TELEGRAM_API_HASH, BOT_TOKEN)")
-                return False
-            
-            try:
-                loop = self._ensure_loop()
-                
-                if self.client is None:
-                    self.client = Client(
-                        "bot_session",
-                        api_id=int(API_ID),
-                        api_hash=API_HASH,
-                        bot_token=BOT_TOKEN,
-                        workdir="."
-                    )
-                
-                async def _start_client():
-                    if not self.client.is_connected:
-                        await self.client.start()
-                    return True
-                
-                future = asyncio.run_coroutine_threadsafe(_start_client(), loop)
-                future.result(timeout=60)
-                self._started = True
-                print("[MTProto] Client started successfully")
-                return True
-                
-            except Exception as e:
-                print(f"[MTProto] Failed to start client: {e}")
-                import traceback
-                traceback.print_exc()
-                self._started = False
-                return False
+            self.handlers.send_message(
+                chat_id, 
+                f"<b>🔗 Link created:</b>\n\n<b>{title}</b>\n{link}",
+                message_id
+            )
+            return {'link': link}
+        else:
+            self.handlers.send_message(chat_id, f"<b>❌ Could not create link for:</b> {query}", message_id)
+            return None
     
-    def stop(self):
-        if self.client and self._started:
-            try:
-                future = asyncio.run_coroutine_threadsafe(self.client.stop(), self.loop)
-                future.result(timeout=10)
-            except:
-                pass
+    def handle_web_search(self, query, chat_id, message_id):
+        self.handlers.send_action(chat_id, 'typing')
+        status_msg = self.handlers.send_message(chat_id, '<b>🔍 Searching the web...</b>', message_id)
         
-        if self.loop:
-            self.loop.call_soon_threadsafe(self.loop.stop)
+        results = search_web(query)
+        formatted = format_web_results(results)
         
-        self._started = False
-    
-    def send_video(self, chat_id, file_path, caption=None, reply_to_message_id=None, progress_callback=None):
-        if not self.start():
-            return {'ok': False, 'error': 'MTProto client not available'}
-        
-        async def _send():
-            try:
-                message = await self.client.send_video(
-                    chat_id=chat_id,
-                    video=file_path,
-                    caption=caption,
-                    parse_mode="html",
-                    reply_to_message_id=reply_to_message_id,
-                    supports_streaming=True,
-                    progress=progress_callback
-                )
-                return {'ok': True, 'result': {'message_id': message.id}}
-            except FloodWait as e:
-                print(f"[MTProto] FloodWait: waiting {e.value} seconds")
-                await asyncio.sleep(e.value)
-                return await _send()
-            except Exception as e:
-                print(f"[MTProto] Send video error: {e}")
-                return {'ok': False, 'error': str(e)}
-        
-        try:
-            future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
-            return future.result(timeout=600)
-        except Exception as e:
-            print(f"[MTProto] Future error: {e}")
-            return {'ok': False, 'error': str(e)}
-    
-    def send_document(self, chat_id, file_path, caption=None, reply_to_message_id=None, progress_callback=None):
-        if not self.start():
-            return {'ok': False, 'error': 'MTProto client not available'}
-        
-        async def _send():
-            try:
-                message = await self.client.send_document(
-                    chat_id=chat_id,
-                    document=file_path,
-                    caption=caption,
-                    parse_mode="html",
-                    reply_to_message_id=reply_to_message_id,
-                    progress=progress_callback
-                )
-                return {'ok': True, 'result': {'message_id': message.id}}
-            except FloodWait as e:
-                print(f"[MTProto] FloodWait: waiting {e.value} seconds")
-                await asyncio.sleep(e.value)
-                return await _send()
-            except Exception as e:
-                print(f"[MTProto] Send document error: {e}")
-                return {'ok': False, 'error': str(e)}
-        
-        try:
-            future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
-            return future.result(timeout=600)
-        except Exception as e:
-            print(f"[MTProto] Future error: {e}")
-            return {'ok': False, 'error': str(e)}
-    
-    def send_audio(self, chat_id, file_path, title=None, caption=None, reply_to_message_id=None):
-        if not self.start():
-            return {'ok': False, 'error': 'MTProto client not available'}
-        
-        async def _send():
-            try:
-                message = await self.client.send_audio(
-                    chat_id=chat_id,
-                    audio=file_path,
-                    caption=caption,
-                    title=title,
-                    parse_mode="html",
-                    reply_to_message_id=reply_to_message_id
-                )
-                return {'ok': True, 'result': {'message_id': message.id}}
-            except FloodWait as e:
-                print(f"[MTProto] FloodWait: waiting {e.value} seconds")
-                await asyncio.sleep(e.value)
-                return await _send()
-            except Exception as e:
-                print(f"[MTProto] Send audio error: {e}")
-                return {'ok': False, 'error': str(e)}
-        
-        try:
-            future = asyncio.run_coroutine_threadsafe(_send(), self.loop)
-            return future.result(timeout=600)
-        except Exception as e:
-            print(f"[MTProto] Future error: {e}")
-            return {'ok': False, 'error': str(e)}
-    
-    def is_available(self):
-        return bool(API_ID and API_HASH and BOT_TOKEN)
-
-mtproto_client = MTProtoClient()
-
-def init_mtproto():
-    """Initialize MTProto client at startup"""
-    if mtproto_client.is_available():
-        print("[MTProto] Initializing client at startup...")
-        mtproto_client.start()
-
-init_mtproto()
+        self.handlers.edit_message(chat_id, status_msg, f"<b>🌐 Results for:</b> {query}\n\n{formatted}")
+        return results
