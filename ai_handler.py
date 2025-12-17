@@ -150,10 +150,20 @@ def search_videos(query, max_results=10):
     except Exception as e:
         return {'success': False, 'error': str(e), 'query': query}
 
+ADULT_PLATFORMS = {
+    'pornhub', 'xhamster', 'xvideos', 'xnxx', 'redtube', 
+    'youporn', 'spankbang', 'tnaflix', 'beeg', 'eporner', 'motherless'
+}
+
 def search_platform_videos(platform, query, max_results=10):
     site_map = {
         'pornhub': 'site:pornhub.com',
         'xhamster': 'site:xhamster.com',
+        'xvideos': 'site:xvideos.com',
+        'xnxx': 'site:xnxx.com',
+        'redtube': 'site:redtube.com',
+        'youporn': 'site:youporn.com',
+        'spankbang': 'site:spankbang.com',
         'facebook': 'site:facebook.com video',
         'youtube': 'site:youtube.com',
         'tiktok': 'site:tiktok.com',
@@ -168,12 +178,27 @@ def search_platform_videos(platform, query, max_results=10):
     
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.videos(full_query, max_results=max_results))
+            results = list(ddgs.videos(full_query, max_results=max_results * 2))
             
             if results:
+                filtered_results = []
+                for video in results:
+                    video_url = video.get('content', '').lower()
+                    if platform.lower() in video_url:
+                        filtered_results.append(video)
+                
+                if filtered_results:
+                    return {
+                        'success': True,
+                        'videos': filtered_results[:max_results],
+                        'query': query,
+                        'platform': platform
+                    }
+            
+            if platform.lower() in ADULT_PLATFORMS:
                 return {
-                    'success': True,
-                    'videos': results,
+                    'success': False,
+                    'error': f'No videos found on {platform}. Adult content is filtered by search.',
                     'query': query,
                     'platform': platform
                 }
